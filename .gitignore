@@ -1,0 +1,45 @@
+###########################
+# FILE DI COMPILAZIONE 
+###########################
+[Bb]in/
+[Oo]bj/
+
+###########################
+# IDE E EDITOR
+###########################
+# Visual Studio Code
+.vscode/
+
+# Visual Studio (Classico)
+.vs/
+*.user
+*.userosscache
+*.sln.docstates
+*.suo
+
+# JetBrains Rider 
+.idea/
+*.sln.iml
+
+###########################
+# SISTEMA OPERATIVO
+###########################
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Mac
+.DS_Store
+
+###########################
+# FILE SPECIFICI MODDING
+###########################
+
+*.dll
+*.pdb
+*.xml
+
+# Log generati localmente
+*.log
+modlog.txt
