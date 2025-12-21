@@ -17,18 +17,18 @@ namespace SyntheticSoulMod
         // Componenti principali
         private SocketServer socketServer;
         private GameStateCapture stateCapture;
-        
+
         // --- CAMPI REFLECTION (Per accedere a variabili private del gioco) ---
         private Type gameManagerType;
         private PropertyInfo gmInstanceProp;      // Accesso a GameManager.instance
         private FieldInfo pdField;                // Accesso a PlayerData
-        
+
         // Campi specifici di PlayerData
         private FieldInfo healthField;            // HP attuali
         private FieldInfo maxHealthField;         // HP massimi (maschere)
         private FieldInfo mpChargeField;          // Anime (Soul) attuali
         private FieldInfo maxMPField;             // Capienza massima Anime
-        
+
         // Campi specifici di HeroController (Sensori)
         private FieldInfo touchingWallLField;     // Sta toccando muro a sinistra?
         private FieldInfo touchingWallRField;     // Sta toccando muro a destra?
@@ -84,7 +84,7 @@ namespace SyntheticSoulMod
 
                 // 5. Aggancia il nostro metodo al loop di aggiornamento dell'Eroe
                 ModHooks.HeroUpdateHook += OnHeroUpdate;
-                
+
                 Modding.Logger.Log("[Synthetic Soul] ✅ Mod caricata - Socket attivo su porta 8888");
             }
             catch (Exception e)
@@ -115,7 +115,7 @@ namespace SyntheticSoulMod
                 Vector2 vel = rb != null ? rb.velocity : Vector2.zero;
 
                 // Valori di default
-                int hp = 9; 
+                int hp = 9;
                 int maxHp = 12;
                 int soul = 0;
                 int maxSoul = 99;
@@ -162,7 +162,7 @@ namespace SyntheticSoulMod
                     Modding.Logger.Log($"[Synthetic Soul] ⚠️ DANNO: {lastHP} -> {hp}");
                 }
                 lastHP = hp;
-                
+
                 // Decrementa il timer del malus
                 if (damageCounter > 0) damageCounter--;
 
@@ -174,8 +174,8 @@ namespace SyntheticSoulMod
 
                 // --- AGGIORNAMENTO STATO GLOBALE ---
                 stateCapture.UpdatePlayerState(
-                    pos, hp, maxHp, vel, soul, maxSoul, 
-                    enemies, groundBelow, touchingWallL, touchingWallR, 
+                    pos, hp, maxHp, vel, soul, maxSoul,
+                    enemies, groundBelow, touchingWallL, touchingWallR,
                     tookDamage, damageCounter > 0
                 );
             }
@@ -195,7 +195,7 @@ namespace SyntheticSoulMod
             {
                 // Trova tutti gli oggetti con vita nella scena
                 HealthManager[] allHealths = UnityEngine.Object.FindObjectsOfType<HealthManager>();
-                
+
                 foreach (HealthManager hm in allHealths)
                 {
                     // Ignora il giocatore stesso

@@ -42,7 +42,7 @@ namespace SyntheticSoulMod
         }
 
         private GameState currentState = new GameState();
-        
+
         // Oggetto usato per sincronizzare i thread (Lock)
         private readonly object _stateLock = new object();
 
