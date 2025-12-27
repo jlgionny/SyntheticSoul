@@ -32,6 +32,10 @@
       <HintPath>$(HKManaged)\Newtonsoft.Json.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="MMHOOK_Assembly-CSharp">
+    <HintPath>$(HKManaged)\MMHOOK_Assembly-CSharp.dll</HintPath>
+    <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <Target Name="CopyMod" AfterTargets="Build">
