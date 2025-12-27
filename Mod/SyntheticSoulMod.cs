@@ -11,35 +11,38 @@ namespace SyntheticSoulMod
     /// Classe principale della Mod. Eredita da 'Mod' (API di Hollow Knight).
     /// Gestisce l'inizializzazione, l'accesso ai dati di gioco tramite Reflection
     /// e l'aggiornamento periodico dello stato.
+    /// 
+    /// NUOVO: Integra l'InputHandler per eseguire azioni ricevute dall'IA.
     /// </summary>
     public class SyntheticSoulMod : Mod
     {
         // Componenti principali
         private SocketServer socketServer;
         private GameStateCapture stateCapture;
+        private InputHandler inputHandler;
 
         // --- CAMPI REFLECTION (Per accedere a variabili private del gioco) ---
         private Type gameManagerType;
-        private PropertyInfo gmInstanceProp;      // Accesso a GameManager.instance
-        private FieldInfo pdField;                // Accesso a PlayerData
+        private PropertyInfo gmInstanceProp; // Accesso a GameManager.instance
+        private FieldInfo pdField; // Accesso a PlayerData
 
         // Campi specifici di PlayerData
-        private FieldInfo healthField;            // HP attuali
-        private FieldInfo maxHealthField;         // HP massimi (maschere)
-        private FieldInfo mpChargeField;          // Anime (Soul) attuali
-        private FieldInfo maxMPField;             // Capienza massima Anime
+        private FieldInfo healthField; // HP attuali
+        private FieldInfo maxHealthField; // HP massimi (maschere)
+        private FieldInfo mpChargeField; // Anime (Soul) attuali
+        private FieldInfo maxMPField; // Capienza massima Anime
 
         // Campi specifici di HeroController (Sensori)
-        private FieldInfo touchingWallLField;     // Sta toccando muro a sinistra?
-        private FieldInfo touchingWallRField;     // Sta toccando muro a destra?
+        private FieldInfo touchingWallLField; // Sta toccando muro a sinistra?
+        private FieldInfo touchingWallRField; // Sta toccando muro a destra?
 
         // --- VARIABILI DI STATO LOCALI ---
-        private int lastHP = 9;                   // Per rilevare il cambio di HP
-        private int damageCounter = 0;            // Contatore per il cooldown post-danno
+        private int lastHP = 9; // Per rilevare il cambio di HP
+        private int damageCounter = 0; // Contatore per il cooldown post-danno
         private const int DAMAGE_MALUS_DURATION = 90; // Durata del malus (in frame)
 
         // Restituisce la versione della mod visibile nel menu
-        public override string GetVersion() => "1.0.0";
+        public override string GetVersion() => "1.1.0";
 
         /// <summary>
         /// Metodo chiamato al caricamento della mod.
@@ -62,7 +65,6 @@ namespace SyntheticSoulMod
 
                 if (gameManagerType != null)
                 {
-                    // Ottieni riferimenti alle proprietà statiche e private
                     gmInstanceProp = gameManagerType.GetProperty("instance", BindingFlags.Public | BindingFlags.Static);
                     pdField = gameManagerType.GetField("playerData", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
                 }
@@ -73,23 +75,50 @@ namespace SyntheticSoulMod
                     touchingWallLField = typeof(HeroController).GetField("touchingWallL", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
                     touchingWallRField = typeof(HeroController).GetField("touchingWallR", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
                 }
-                catch { /* Ignora se fallisce, useremo valori di default */ }
+                catch { /* Ignora se fallisce */ }
 
-                // 4. Avvia il Server Socket in un thread separato per non bloccare il gioco
+                // 4. Inizializza InputHandler dopo il caricamento del gioco
+                ModHooks.HeroUpdateHook += InitializeInputHandlerOnce;
+
+                // 5. Configura il callback del SocketServer per eseguire azioni
+                socketServer.ActionCallback += (action) =>
+                {
+                    if (inputHandler != null)
+                    {
+                        inputHandler.ExecuteAction(action);
+                    }
+                };
+
+                // 6. Avvia il Server Socket in un thread separato
                 Thread socketThread = new Thread(() => socketServer.Start(stateCapture))
                 {
-                    IsBackground = true // Il thread muore se il gioco si chiude
+                    IsBackground = true
                 };
                 socketThread.Start();
 
-                // 5. Aggancia il nostro metodo al loop di aggiornamento dell'Eroe
+                // 7. Aggancia il nostro metodo al loop di aggiornamento dell'Eroe
                 ModHooks.HeroUpdateHook += OnHeroUpdate;
 
-                Modding.Logger.Log("[Synthetic Soul] ✅ Mod caricata - Socket attivo su porta 8888");
+                Modding.Logger.Log("✅ [Synthetic Soul v1.1.0] Mod caricata - Socket attivo su porta 8888");
             }
             catch (Exception e)
             {
-                Modding.Logger.Log($"[Synthetic Soul] ❌ Errore Critico Init: {e.Message}");
+                Modding.Logger.Log($"❌ [Synthetic Soul] Errore Critico Init: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Inizializza l'InputHandler solo una volta (dopo che HeroController è disponibile)
+        /// </summary>
+        private void InitializeInputHandlerOnce()
+        {
+            if (inputHandler == null && HeroController.instance != null)
+            {
+                inputHandler = new InputHandler(HeroController.instance);
+                Modding.Logger.Log("✅ [Synthetic Soul] InputHandler inizializzato");
+                
+                // Rimuovi questo hook per non eseguirlo più
+                ModHooks.HeroUpdateHook -= InitializeInputHandlerOnce;
             }
         }
 
@@ -101,7 +130,7 @@ namespace SyntheticSoulMod
         /// </summary>
         private void OnHeroUpdate()
         {
-            // Eseguiamo la logica solo 1 volta ogni 5 frame per ottimizzare le prestazioni
+            // Eseguiamo la logica solo 1 volta ogni 5 frame per ottimizzare
             if (++updateCounter % 5 != 0) return;
 
             try
@@ -121,7 +150,6 @@ namespace SyntheticSoulMod
                 int maxSoul = 99;
 
                 // --- LETTURA DATI TRAMITE REFLECTION ---
-                // Proviamo a leggere i valori reali da PlayerData
                 try
                 {
                     if (gmInstanceProp != null && pdField != null)
@@ -132,8 +160,8 @@ namespace SyntheticSoulMod
                             object playerData = pdField.GetValue(gmInstance);
                             if (playerData != null)
                             {
-                                // Cache dei FieldInfo (fatto solo la prima volta per velocità)
                                 Type pdType = playerData.GetType();
+                                
                                 if (mpChargeField == null)
                                 {
                                     mpChargeField = pdType.GetField("MPCharge", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
@@ -142,7 +170,6 @@ namespace SyntheticSoulMod
                                     maxHealthField = pdType.GetField("maxHealth", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
                                 }
 
-                                // Lettura valori
                                 if (mpChargeField != null) soul = (int)mpChargeField.GetValue(playerData);
                                 if (maxMPField != null) maxSoul = (int)maxMPField.GetValue(playerData);
                                 if (healthField != null) hp = (int)healthField.GetValue(playerData);
@@ -151,16 +178,17 @@ namespace SyntheticSoulMod
                         }
                     }
                 }
-                catch { /* Fallback ai valori di default in caso di errore Reflection */ }
+                catch { /* Fallback ai valori di default */ }
 
                 // --- LOGICA DANNI ---
                 bool tookDamage = false;
                 if (hp < lastHP)
                 {
                     tookDamage = true;
-                    damageCounter = DAMAGE_MALUS_DURATION; // Avvia timer malus
-                    Modding.Logger.Log($"[Synthetic Soul] ⚠️ DANNO: {lastHP} -> {hp}");
+                    damageCounter = DAMAGE_MALUS_DURATION;
+                    Modding.Logger.Log($"⚠️ [Synthetic Soul] DANNO: {lastHP} -> {hp}");
                 }
+
                 lastHP = hp;
 
                 // Decrementa il timer del malus
@@ -181,7 +209,7 @@ namespace SyntheticSoulMod
             }
             catch (Exception e)
             {
-                Modding.Logger.Log($"[Synthetic Soul] Errore Loop: {e.Message}");
+                Modding.Logger.Log($"❌ [Synthetic Soul] Errore Loop: {e.Message}");
             }
         }
 
@@ -193,17 +221,14 @@ namespace SyntheticSoulMod
             List<GameStateCapture.Enemy> enemies = new List<GameStateCapture.Enemy>();
             try
             {
-                // Trova tutti gli oggetti con vita nella scena
                 HealthManager[] allHealths = UnityEngine.Object.FindObjectsOfType<HealthManager>();
-
                 foreach (HealthManager hm in allHealths)
                 {
-                    // Ignora il giocatore stesso
                     if (hm.gameObject == HeroController.instance.gameObject) continue;
-
+                    
                     Vector3 enemyPos = hm.transform.position;
                     float distance = Vector3.Distance(playerPos, enemyPos);
-
+                    
                     if (distance < radius)
                     {
                         enemies.Add(new GameStateCapture.Enemy
@@ -216,26 +241,29 @@ namespace SyntheticSoulMod
                         });
                     }
                 }
-                // Ordina per distanza (più vicini prima)
+
                 enemies.Sort((a, b) => a.Distance.CompareTo(b.Distance));
             }
             catch { }
+            
             return enemies;
         }
 
-        // Helper per controllare se il giocatore è a terra (basato sulla velocità Y quasi zero)
+        // Helper per controllare se il giocatore è a terra
         private bool CheckGround(Vector2 velocity) => velocity.y <= 0.1f && velocity.y >= -0.1f;
 
         // Helper per leggere il campo privato 'touchingWallL'
         private bool CheckWallLeft(HeroController hero)
         {
-            try { return touchingWallLField != null && (bool)touchingWallLField.GetValue(hero); } catch { return false; }
+            try { return touchingWallLField != null && (bool)touchingWallLField.GetValue(hero); }
+            catch { return false; }
         }
 
         // Helper per leggere il campo privato 'touchingWallR'
         private bool CheckWallRight(HeroController hero)
         {
-            try { return touchingWallRField != null && (bool)touchingWallRField.GetValue(hero); } catch { return false; }
+            try { return touchingWallRField != null && (bool)touchingWallRField.GetValue(hero); }
+            catch { return false; }
         }
     }
 }

@@ -9,24 +9,35 @@ using Modding;
 namespace SyntheticSoulMod
 {
     /// <summary>
-    /// Server TCP semplice.
-    /// Ascolta sulla porta specificata e invia il JSON di stato a chi si connette.
+    /// Server TCP bidirezionale FIXED.
+    /// 
+    /// FLUSSO CORRETTO:
+    /// 1. Client si connette
+    /// 2. Server invia JSON (stato di gioco)
+    /// 3. Server ASPETTA azione dal client (ReadLine)
+    /// 4. Client invia azione (es: "JUMP\n")
+    /// 5. Server esegue azione
+    /// 6. Connessione chiude
+    /// 7. Ripete da capo
     /// </summary>
     public class SocketServer
     {
         private TcpListener tcpListener;
         private int port;
         private bool isRunning = false;
+        
+        // Callback per notificare quando un'azione è ricevuta
+        public delegate void OnActionReceived(InputHandler.AIAction action);
+        public OnActionReceived ActionCallback { get; set; }
 
         public SocketServer(int port)
         {
             this.port = port;
-            // Ascolta solo su Localhost (127.0.0.1) per sicurezza
             tcpListener = new TcpListener(IPAddress.Loopback, port);
         }
 
         /// <summary>
-        /// Avvia il loop di ascolto. Questo metodo è bloccante, va eseguito in un Thread separato.
+        /// Avvia il loop di ascolto. Eseguito in un Thread separato.
         /// </summary>
         public void Start(GameStateCapture stateCapture)
         {
@@ -44,13 +55,14 @@ namespace SyntheticSoulMod
                         if (tcpListener.Pending())
                         {
                             TcpClient client = tcpListener.AcceptTcpClient();
-                            // Gestisce il client in un task del ThreadPool per non bloccare
+                            // Gestisce il client in un task del ThreadPool
                             ThreadPool.QueueUserWorkItem(_ => HandleClient(client, stateCapture));
                         }
-                        // Piccola pausa per non consumare il 100% della CPU nel loop
+
+                        // Piccola pausa per non consumare il 100% della CPU
                         Thread.Sleep(10);
                     }
-                    catch { /* Gestione errori silenziosa nel loop */ }
+                    catch { /* Errori nel loop */ }
                 }
             }
             catch (Exception e)
@@ -59,23 +71,68 @@ namespace SyntheticSoulMod
             }
         }
 
+        /// <summary>
+        /// Gestisce un client singolo.
+        /// 
+        /// SEQUENZA:
+        /// 1. Client si connette
+        /// 2. Invia lo stato (JSON)
+        /// 3. ASPETTA l'azione dal client (ReadLine è BLOCCANTE)
+        /// 4. Riceve azione e la esegue
+        /// 5. Chiude connessione
+        /// </summary>
         private void HandleClient(TcpClient client, GameStateCapture stateCapture)
         {
             try
             {
                 using (NetworkStream stream = client.GetStream())
-                // new UTF8Encoding(false) DISABILITA il BOM (Byte Order Mark) che causa errori in Python
-                using (StreamWriter writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true })
                 {
-                    // Ottieni il JSON aggiornato (Thread-Safe grazie al lock in GameStateCapture)
-                    string gameStateJSON = stateCapture.GetStateAsJSON();
-                    writer.WriteLine(gameStateJSON);
+                    // Timeout per evitare che il server resti bloccato
+                    stream.ReadTimeout = 5000;  // 5 secondi
+                    stream.WriteTimeout = 5000; // 5 secondi
+
+                    using (StreamWriter writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true })
+                    using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+                    {
+                        // === FASE 1: INVIA STATO ATTUALE ===
+                        string gameStateJSON = stateCapture.GetStateAsJSON();
+                        writer.WriteLine(gameStateJSON);
+                        Modding.Logger.Log($"[SocketServer] 📤 Stato inviato al client");
+
+                        // === FASE 2: RICEVI AZIONE DALL'IA (ASPETTA QUI) ===
+                        string actionString = reader.ReadLine();
+                        
+                        if (!string.IsNullOrEmpty(actionString))
+                        {
+                            // Parsing azione
+                            InputHandler.AIAction action = InputHandler.ParseAction(actionString);
+                            Modding.Logger.Log($"[SocketServer] 📥 Azione ricevuta: {action}");
+
+                            // Invoca il callback per eseguire l'azione nel gioco
+                            ActionCallback?.Invoke(action);
+                        }
+                        else
+                        {
+                            Modding.Logger.Log($"[SocketServer] ⚠️ Azione vuota ricevuta");
+                        }
+                    }
                 }
             }
-            catch { /* Il client si è disconnesso o c'è stato un errore di rete */ }
+            catch (IOException ioEx)
+            {
+                Modding.Logger.Log($"[SocketServer] ⚠️ Errore I/O HandleClient: {ioEx.Message}");
+            }
+            catch (Exception e)
+            {
+                Modding.Logger.Log($"[SocketServer] ❌ Errore HandleClient: {e.Message}");
+            }
             finally
             {
-                client.Close();
+                try
+                {
+                    client.Close();
+                }
+                catch { }
             }
         }
 
