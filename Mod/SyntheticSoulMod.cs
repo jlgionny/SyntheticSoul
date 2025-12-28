@@ -26,7 +26,7 @@ namespace SyntheticSoulMod
         private int lastHP = 9;
         private int damageCounter = 0;
 
-        public override string GetVersion() => "2.0.0 Input Timing Fix";
+        public override string GetVersion() => "2.0.0";
 
         public override void Initialize(Dictionary<string, Dictionary<string, GameObject>> preloadedObjects)
         {
