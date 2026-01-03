@@ -16,14 +16,14 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        if [ -f AI_Python/requirements.txt ]; then pip install -r AI_Python/requirements.txt; fi
+        if [ -f AI_Agents/requirements.txt ]; then pip install -r AI_Agents/requirements.txt; fi
         
     - name: 1. Check Formatting (Black)
       # Se fallisce qui, il dev deve lanciare "black ." sul suo PC
       run: |
-        black --check AI_Python
+        black --check AI_Agents
         
     - name: 2. Check Logic & Style (Flake8)
       # Ignoriamo E501 (lunghezza riga) perché se ne occupa già Black
       run: |
-        flake8 AI_Python --ignore=E501,W503 --count --show-source --statistics
+        flake8 AI_Agents --ignore=E501,W503 --count --show-source --statistics
