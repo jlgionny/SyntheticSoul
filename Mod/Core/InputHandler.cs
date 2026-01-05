@@ -5,10 +5,8 @@ namespace SyntheticSoulMod
 {
     public class InputHandler
     {
-        // Variabili di stato semplici
         public bool isMovingLeft = false;
         public bool isMovingRight = false;
-        
         public bool jumpRequested = false;
         public bool attackRequested = false;
         public bool dashRequested = false;
@@ -19,31 +17,21 @@ namespace SyntheticSoulMod
             IDLE = 0, JUMP = 1, ATTACK = 2, MOVE_LEFT = 3, MOVE_RIGHT = 4, DASH = 5, FOCUS = 6
         }
 
+        public static AIAction ParseAction(string actionString)
+        {
+            try { return (AIAction)Enum.Parse(typeof(AIAction), actionString, true); }
+            catch { return AIAction.IDLE; }
+        }
+
         public void ExecuteAction(AIAction action)
         {
-            // Reset direzioni per evitare conflitti (sinistra+destra insieme)
-            if (action == AIAction.IDLE || action == AIAction.JUMP || action == AIAction.ATTACK)
-            {
-                // Non resettiamo il movimento se saltiamo/attacchiamo, così possiamo farlo mentre corriamo
-                if (action == AIAction.IDLE) 
-                {
-                    isMovingLeft = false;
-                    isMovingRight = false;
-                }
-            }
-            else if (action == AIAction.MOVE_LEFT)
-            {
-                isMovingLeft = true;
-                isMovingRight = false;
-            }
-            else if (action == AIAction.MOVE_RIGHT)
-            {
-                isMovingRight = true;
-                isMovingLeft = false;
-            }
+            // Reset preventivo
+            ResetState();
 
             switch (action)
             {
+                case AIAction.MOVE_LEFT: isMovingLeft = true; break;
+                case AIAction.MOVE_RIGHT: isMovingRight = true; break;
                 case AIAction.JUMP: jumpRequested = true; break;
                 case AIAction.ATTACK: attackRequested = true; break;
                 case AIAction.DASH: dashRequested = true; break;
@@ -51,10 +39,15 @@ namespace SyntheticSoulMod
             }
         }
 
-        public static AIAction ParseAction(string actionString)
+        //Azzera tutto immediatamente
+        public void ResetState()
         {
-            if (Enum.TryParse(actionString.ToUpper(), out AIAction action)) return action;
-            return AIAction.IDLE;
+            isMovingLeft = false;
+            isMovingRight = false;
+            jumpRequested = false;
+            attackRequested = false;
+            dashRequested = false;
+            focusRequested = false;
         }
 
         public float GetHorizontalInput()

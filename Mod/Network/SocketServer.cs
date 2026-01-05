@@ -1,8 +1,8 @@
 using System;
 using System.Net;
 using System.Net.Sockets;
-using System.Text;
 using System.IO;
+using System.Text;
 using System.Threading;
 using Modding;
 
@@ -10,79 +10,86 @@ namespace SyntheticSoulMod
 {
     public class SocketServer
     {
-        private TcpListener tcpListener;
-        private int port;
-        private bool isRunning = false;
-        public Action<InputHandler.AIAction> ActionCallback { get; set; }
+        private TcpListener _listener;
+        private bool _isRunning = false;
+        
+        // Callback per passare l'azione ricevuta al gioco
+        public Action<string> ActionCallback;
 
         public SocketServer(int port)
         {
-            this.port = port;
-            tcpListener = new TcpListener(IPAddress.Loopback, port);
+            // Ascolta solo su localhost per sicurezza e velocità
+            _listener = new TcpListener(IPAddress.Parse("127.0.0.1"), port);
         }
 
-        public void Start(GameStateCapture stateCapture)
+        public void Start(GameStateCapture capture)
         {
             try
             {
-                tcpListener.Start();
-                isRunning = true;
-                Modding.Logger.Log($"[Synthetic Soul] SocketServer ✅ In ascolto su 127.0.0.1:{port}");
+                _listener.Start();
+                _isRunning = true;
+                Modding.Logger.Log("[SyntheticSoul] Server avviato. In attesa di Python...");
 
-                while (isRunning)
+                while (_isRunning)
                 {
-                    try
+                    // 1. Accetta il client (Python) - Questo blocca finché Python non si connette
+                    try 
                     {
-                        if (tcpListener.Pending())
+                        using (TcpClient client = _listener.AcceptTcpClient())
+                        using (NetworkStream stream = client.GetStream())
+                        using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+                        using (StreamWriter writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true })
                         {
-                            TcpClient client = tcpListener.AcceptTcpClient();
-                            ThreadPool.QueueUserWorkItem(_ => HandleClient(client, stateCapture));
+                            Modding.Logger.Log("[SyntheticSoul] Python Connesso!");
+
+                            // 2. CICLO DI COMUNICAZIONE PERSISTENTE
+                            // Continua a scambiare dati finché il client non si disconnette o crasha
+                            while (client.Connected)
+                            {
+                                // A. Prepara e invia lo stato attuale (JSON)
+                                string json = capture.GetJson();
+                                writer.WriteLine(json);
+
+                                // B. Aspetta la risposta (Azione)
+                                // Questo blocca il thread finché Python non invia qualcosa
+                                string response = reader.ReadLine();
+
+                                // Se response è null, significa che Python ha chiuso la connessione
+                                if (response == null) 
+                                {
+                                    Modding.Logger.Log("[SyntheticSoul] Python si è disconnesso.");
+                                    break; 
+                                }
+
+                                // C. Esegui l'azione ricevuta
+                                if (!string.IsNullOrEmpty(response) && ActionCallback != null)
+                                {
+                                    ActionCallback(response);
+                                }
+                            }
                         }
-                        Thread.Sleep(10);
                     }
-                    catch { }
+                    catch (IOException) 
+                    {
+                        // Succede se Python crasha o chiude forzatamente. Ignoriamo e torniamo in ascolto.
+                        Modding.Logger.Log("[SyntheticSoul] Connessione persa/interrotta.");
+                    }
                 }
             }
             catch (Exception e)
             {
-                Modding.Logger.Log($"[Synthetic Soul] SocketServer ❌ Errore: {e.Message}");
+                Modding.Logger.Log("[SyntheticSoul] Server Critical Error: " + e.Message);
             }
-        }
-
-        private void HandleClient(TcpClient client, GameStateCapture stateCapture)
-        {
-            try
-            {
-                using (NetworkStream stream = client.GetStream())
-                using (StreamReader reader = new StreamReader(stream, new UTF8Encoding(false)))
-                using (StreamWriter writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true })
-                {
-                    string gameStateJSON = stateCapture.GetStateAsJSON();
-                    writer.WriteLine(gameStateJSON);
-
-                    string actionLine = reader.ReadLine();
-                    if (!string.IsNullOrEmpty(actionLine))
-                    {
-                        Modding.Logger.Log($"[SocketServer] 📩 Azione ricevuta {actionLine}");
-                        if (ActionCallback != null)
-                        {
-                            var action = InputHandler.ParseAction(actionLine);
-                            ActionCallback(action);
-                        }
-                    }
-                }
-            }
-            catch { }
             finally
             {
-                client.Close();
+                _listener.Stop();
             }
         }
 
         public void Stop()
         {
-            isRunning = false;
-            try { tcpListener?.Stop(); } catch { }
+            _isRunning = false;
+            _listener.Stop();
         }
     }
 }
