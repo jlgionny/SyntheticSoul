@@ -1,95 +1,103 @@
 using System;
 using System.Net;
 using System.Net.Sockets;
-using System.IO;
 using System.Text;
 using System.Threading;
-using Modding;
+using Modding; // Serve per il logging
 
 namespace SyntheticSoulMod
 {
     public class SocketServer
     {
-        private TcpListener _listener;
-        private bool _isRunning = false;
-        
-        // Callback per passare l'azione ricevuta al gioco
+        private TcpListener listener;
+        private Thread listenerThread;
+        private int port;
+        private volatile bool running = false;
+        private GameStateCapture stateCapture;
         public Action<string> ActionCallback;
+        private Mod logger;
 
-        public SocketServer(int port)
+        public SocketServer(int port, Mod modLogger = null)
         {
-            // Ascolta solo su localhost per sicurezza e velocità
-            _listener = new TcpListener(IPAddress.Parse("127.0.0.1"), port);
+            this.port = port;
+            this.logger = modLogger;
         }
 
         public void Start(GameStateCapture capture)
         {
+            this.stateCapture = capture;
+            running = true;
+            listenerThread = new Thread(ListenForClients);
+            listenerThread.IsBackground = true;
+            listenerThread.Start();
+        }
+
+        private void ListenForClients()
+        {
             try
             {
-                _listener.Start();
-                _isRunning = true;
-                Modding.Logger.Log("[SyntheticSoul] Server avviato. In attesa di Python...");
+                listener = new TcpListener(IPAddress.Parse("127.0.0.1"), port);
+                listener.Start();
+                if(logger!=null) logger.Log($"[Socket] Server avviato su {port}");
 
-                while (_isRunning)
+                while (running)
                 {
-                    // 1. Accetta il client (Python) - Questo blocca finché Python non si connette
-                    try 
+                    try
                     {
-                        using (TcpClient client = _listener.AcceptTcpClient())
-                        using (NetworkStream stream = client.GetStream())
-                        using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
-                        using (StreamWriter writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true })
-                        {
-                            Modding.Logger.Log("[SyntheticSoul] Python Connesso!");
-
-                            // 2. CICLO DI COMUNICAZIONE PERSISTENTE
-                            // Continua a scambiare dati finché il client non si disconnette o crasha
-                            while (client.Connected)
-                            {
-                                // A. Prepara e invia lo stato attuale (JSON)
-                                string json = capture.GetJson();
-                                writer.WriteLine(json);
-
-                                // B. Aspetta la risposta (Azione)
-                                // Questo blocca il thread finché Python non invia qualcosa
-                                string response = reader.ReadLine();
-
-                                // Se response è null, significa che Python ha chiuso la connessione
-                                if (response == null) 
-                                {
-                                    Modding.Logger.Log("[SyntheticSoul] Python si è disconnesso.");
-                                    break; 
-                                }
-
-                                // C. Esegui l'azione ricevuta
-                                if (!string.IsNullOrEmpty(response) && ActionCallback != null)
-                                {
-                                    ActionCallback(response);
-                                }
-                            }
-                        }
+                        if (!listener.Pending()) { Thread.Sleep(50); continue; }
+                        TcpClient client = listener.AcceptTcpClient();
+                        if(logger!=null) logger.Log("[Socket] Python Connesso!");
+                        HandleClient(client);
                     }
-                    catch (IOException) 
+                    catch (Exception ex)
                     {
-                        // Succede se Python crasha o chiude forzatamente. Ignoriamo e torniamo in ascolto.
-                        Modding.Logger.Log("[SyntheticSoul] Connessione persa/interrotta.");
+                        if(logger!=null) logger.Log($"[Socket] Loop Error: {ex.Message}");
                     }
                 }
             }
-            catch (Exception e)
+            catch (Exception ex)
             {
-                Modding.Logger.Log("[SyntheticSoul] Server Critical Error: " + e.Message);
+                if(logger!=null) logger.Log($"[Socket] Start Error: {ex.Message}");
             }
             finally
             {
-                _listener.Stop();
+                listener?.Stop();
             }
         }
 
-        public void Stop()
+        private void HandleClient(TcpClient client)
         {
-            _isRunning = false;
-            _listener.Stop();
+            using (NetworkStream stream = client.GetStream())
+            {
+                byte[] buffer = new byte[1024];
+                while (client.Connected && running)
+                {
+                    try
+                    {
+                        // Usa il metodo sicuro senza JsonUtility
+                        string jsonState = stateCapture.GetStateJson();
+                        byte[] data = Encoding.UTF8.GetBytes(jsonState + "\n");
+                        stream.Write(data, 0, data.Length);
+
+                        if (stream.DataAvailable)
+                        {
+                            int bytesRead = stream.Read(buffer, 0, buffer.Length);
+                            if (bytesRead > 0)
+                            {
+                                string action = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                                ActionCallback?.Invoke(action);
+                            }
+                        }
+                        Thread.Sleep(10); 
+                    }
+                    catch (Exception ex)
+                    {
+                        if(logger!=null) logger.Log($"[Socket] Client Error: {ex.Message}");
+                        break;
+                    }
+                }
+            }
+            if(logger!=null) logger.Log("[Socket] Client Disconnesso.");
         }
     }
 }

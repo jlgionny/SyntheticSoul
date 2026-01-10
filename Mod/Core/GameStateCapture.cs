@@ -1,69 +1,85 @@
 using UnityEngine;
+using System;
 using System.Collections.Generic;
-using Newtonsoft.Json;
+using System.Text; // Serve per StringBuilder
 
 namespace SyntheticSoulMod
 {
     public class GameStateCapture
     {
-        public struct Enemy
-        {
-            [JsonProperty("type")] public string Type;
-            [JsonProperty("x")] public float X;
-            [JsonProperty("y")] public float Y;
-            [JsonProperty("dist")] public float Distance;
-            [JsonProperty("hp")] public int HP;
+        public class Enemy 
+        { 
+            public string Type; 
+            public float X; 
+            public float Y; 
+            public float Distance; 
+            public int HP; 
         }
 
-        public class GameState
+        public class PlayerState
         {
-            [JsonProperty("p_x")] public float PlayerX;
-            [JsonProperty("p_y")] public float PlayerY;
-            [JsonProperty("hp")] public int HP;
-            [JsonProperty("max_hp")] public int MaxHP;
-            [JsonProperty("soul")] public int Soul;
-            [JsonProperty("vel_x")] public float VelX;
-            [JsonProperty("vel_y")] public float VelY;
-            [JsonProperty("ground")] public bool OnGround;
-            [JsonProperty("wall")] public bool TouchingWall;
-            [JsonProperty("hurt")] public bool TookDamage; 
-            [JsonProperty("enemies")] public List<Enemy> Enemies;
+            public float x; public float y; public int health; public int maxHealth;
+            public float vx; public float vy; public int soul;
+            public bool onGround; public bool touchingWall; public bool damageTaken;
+            public List<Enemy> enemies;
         }
 
-        private GameState currentState = new GameState();
-        private readonly object _lock = new object();
+        private PlayerState currentState = new PlayerState();
+        private readonly object stateLock = new object();
 
-        public void UpdatePlayerState(Vector3 pos, int hp, int maxHp, Vector2 vel, int soul, 
-                                      List<Enemy> enemies, bool tookDamage, bool onGround, bool touchingWall)
+        public void UpdatePlayerState(Vector3 pos, int hp, int maxHp, Vector2 vel, int soul, List<Enemy> enemies, bool dmg, bool ground, bool wall)
         {
-            lock (_lock)
+            lock (stateLock)
             {
-                currentState.PlayerX = pos.x;
-                currentState.PlayerY = pos.y;
-                currentState.HP = hp;
-                currentState.MaxHP = maxHp;
-                currentState.VelX = vel.x;
-                currentState.VelY = vel.y;
-                currentState.Soul = soul;
-                currentState.Enemies = enemies ?? new List<Enemy>();
-                currentState.TookDamage = tookDamage;
-                currentState.OnGround = onGround;
-                currentState.TouchingWall = touchingWall;
+                currentState.x = pos.x; currentState.y = pos.y;
+                currentState.health = hp; currentState.maxHealth = maxHp;
+                currentState.vx = vel.x; currentState.vy = vel.y;
+                currentState.soul = soul;
+                currentState.enemies = enemies;
+                currentState.damageTaken = dmg;
+                currentState.onGround = ground;
+                currentState.touchingWall = wall;
             }
         }
 
-        public string GetJson()
+        public string GetStateJson()
         {
-            lock (_lock)
-            {
-                return JsonConvert.SerializeObject(currentState);
+            lock (stateLock) 
+            { 
+                // Costruzione manuale del JSON per evitare errori di compilazione e dipendenze mancanti
+                StringBuilder sb = new StringBuilder();
+                sb.Append("{");
+                sb.Append($"\"x\":{currentState.x.ToString(System.Globalization.CultureInfo.InvariantCulture)},");
+                sb.Append($"\"y\":{currentState.y.ToString(System.Globalization.CultureInfo.InvariantCulture)},");
+                sb.Append($"\"health\":{currentState.health},");
+                sb.Append($"\"maxHealth\":{currentState.maxHealth},");
+                sb.Append($"\"vx\":{currentState.vx.ToString(System.Globalization.CultureInfo.InvariantCulture)},");
+                sb.Append($"\"vy\":{currentState.vy.ToString(System.Globalization.CultureInfo.InvariantCulture)},");
+                sb.Append($"\"soul\":{currentState.soul},");
+                sb.Append($"\"onGround\":{(currentState.onGround ? "true" : "false")},");
+                sb.Append($"\"touchingWall\":{(currentState.touchingWall ? "true" : "false")},");
+                sb.Append($"\"damageTaken\":{(currentState.damageTaken ? "true" : "false")},");
+                
+                sb.Append("\"enemies\":[");
+                if (currentState.enemies != null && currentState.enemies.Count > 0)
+                {
+                    for (int i = 0; i < currentState.enemies.Count; i++)
+                    {
+                        var e = currentState.enemies[i];
+                        sb.Append("{");
+                        sb.Append($"\"Type\":\"{e.Type}\",");
+                        sb.Append($"\"X\":{e.X.ToString(System.Globalization.CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"Y\":{e.Y.ToString(System.Globalization.CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"Distance\":{e.Distance.ToString(System.Globalization.CultureInfo.InvariantCulture)},");
+                        sb.Append($"\"HP\":{e.HP}");
+                        sb.Append("}");
+                        if (i < currentState.enemies.Count - 1) sb.Append(",");
+                    }
+                }
+                sb.Append("]");
+                sb.Append("}");
+                return sb.ToString();
             }
-        }
-        
-        // Metodo legacy per compatibilitÃ col Server
-        public string GetStateAsJSON()
-        {
-            return GetJson();
         }
     }
 }
