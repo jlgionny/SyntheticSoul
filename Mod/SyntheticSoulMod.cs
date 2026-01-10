@@ -17,9 +17,7 @@ namespace SyntheticSoulMod
         private FieldInfo moveInputField;
         private FieldInfo verticalInputField; 
         private FieldInfo attackInputField; 
-        private FieldInfo castInputField;     
         private FieldInfo quickCastInputField;
-        private FieldInfo dashInputField;
         private FieldInfo spellControlField; 
         private MonoBehaviour spellCtrlFSM;
         
@@ -38,11 +36,11 @@ namespace SyntheticSoulMod
         private int lastHP = -1;
         private bool damageTakenSinceLastSend = false; 
 
-        public override string GetVersion() => "98.5.0-GROUNDED-ONLY";
+        public override string GetVersion() => "99.0.0-DANGER-SENSE";
 
         public override void Initialize(Dictionary<string, Dictionary<string, GameObject>> preloadedObjects)
         {
-            Log("Inizializzazione Synthetic Soul (V98.5 - Grounded Only)...");
+            Log("Inizializzazione Synthetic Soul (V99.0 - Danger Sense)...");
             try
             {
                 stateCapture = new GameStateCapture();
@@ -68,7 +66,6 @@ namespace SyntheticSoulMod
                 };
 
                 var flags = BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public;
-                
                 moveInputField = typeof(HeroController).GetField("move_input", flags) ?? typeof(HeroController).GetField("moveInput", flags);
                 verticalInputField = typeof(HeroController).GetField("vertical_input", flags) ?? typeof(HeroController).GetField("verticalInput", flags);
                 attackInputField = typeof(HeroController).GetField("attack_input", flags) ?? typeof(HeroController).GetField("attackInput", flags);
@@ -81,10 +78,10 @@ namespace SyntheticSoulMod
 
                 On.HeroController.LookForInput += OnLookForInput;
                 ModHooks.HeroUpdateHook += OnHeroUpdate;
-                On.HeroController.JumpReleased += OnJumpReleased; // Necessario per il salto variabile
+                On.HeroController.JumpReleased += OnJumpReleased;
                 On.HeroController.Start += OnHeroStart;
 
-                Log("Synthetic Soul Ready - V98.5 STABLE");
+                Log("Synthetic Soul Ready - V99.0");
             }
             catch (Exception e) { Log("Init Error: " + e.Message); }
         }
@@ -102,35 +99,27 @@ namespace SyntheticSoulMod
 
         private void OnJumpReleased(On.HeroController.orig_JumpReleased orig, HeroController self)
         {
-            // Se l'AI tiene premuto SALTO, ignoriamo il rilascio naturale del tasto (se serve)
-            // MA se il timer AI è scaduto, lasciamo che il gioco processi il rilascio.
             bool aiJumping = false;
             if (inputHandler != null) aiJumping = inputHandler.jumpHeld;
-            
-            if (aiJumping) return; // L'AI sta ancora "premendo", non interrompere il salto.
-            
+            if (aiJumping) return;
             orig(self);
         }
 
         private void OnLookForInput(On.HeroController.orig_LookForInput orig, HeroController self)
         {
             orig(self);
-            
-            // 1. SICUREZZA: Se morto, in transizione o PRENDE DANNO (Recoil), STOP AI.
             if (self.cState.recoiling || self.cState.dead || self.cState.transitioning) return;
             
             if (inputHandler != null)
             {
                 if (spellCtrlFSM == null) LocateFSMs(self);
 
-                // === MOVIMENTO IBRIDO ===
                 float aiInputX = inputHandler.GetHorizontalInput();
                 if (Mathf.Abs(aiInputX) > 0.1f && moveInputField != null)
                 {
                     moveInputField.SetValue(self, aiInputX);
                 }
 
-                // === SGUARDO ===
                 if (verticalInputField != null)
                 {
                     bool stickyUp = Time.time < upStickyTimer;
@@ -148,7 +137,6 @@ namespace SyntheticSoulMod
                     }
                 }
 
-                // Attacchi e Cast simulati
                 if (inputHandler.attackHeld && attackInputField != null) attackInputField.SetValue(self, true);
                 if (inputHandler.castHeld && quickCastInputField != null) quickCastInputField.SetValue(self, true);
             }
@@ -158,8 +146,6 @@ namespace SyntheticSoulMod
         {
             var hero = HeroController.instance;
             if (hero == null || hero.cState.dead) return;
-            
-            // CRUCIALE: Se prende danno, ferma tutto.
             if (hero.cState.recoiling) return;
 
             float now = Time.time;
@@ -167,14 +153,12 @@ namespace SyntheticSoulMod
             bool stickyUp = Time.time < upStickyTimer;
             bool stickyDown = Time.time < downStickyTimer;
 
-            // --- SPELL ---
             if (isCasting && (now - lastCastTime > 0.4f))
             {
                 if (!stickyUp && !stickyDown && verticalInputField != null) verticalInputField.SetValue(hero, 0f);
                 if (spellCtrlFSM != null) { SendFSMEvent(spellCtrlFSM, "QUICK CAST"); lastCastTime = now; }
             }
             
-            // --- ATTACK ---
             if (inputHandler.attackHeld && (now - lastAttackTime > 0.35f))
             {
                 if (stickyUp || inputHandler.isLookingUp)
@@ -191,30 +175,18 @@ namespace SyntheticSoulMod
                 lastAttackTime = now;
             }
 
-            // --- JUMP (VECCHIO METODO + CONTROLLI) ---
             if (inputHandler.jumpHeld)
             {
-                // CONTROLLO 1: Posso saltare solo se sono a terra o scivolo su un muro.
                 bool canJump = hero.cState.onGround || hero.cState.wallSliding;
-                
-                // CONTROLLO 2: Non devo stare già saltando (evita spam).
                 bool alreadyJumping = hero.cState.jumping;
-
                 if (canJump && !alreadyJumping)
                 {
-                    // Cooldown minimo di 0.2s tra i salti
-                    if (now - lastJumpTime > 0.2f) 
-                    { 
-                        CallHeroMethod(hero, "Jump"); 
-                        lastJumpTime = now; 
-                    }
+                    if (now - lastJumpTime > 0.2f) { CallHeroMethod(hero, "Jump"); lastJumpTime = now; }
                 }
             }
 
-            // --- DASH ---
             if (inputHandler.dashHeld && (now - lastDashTime > 0.6f)) { CallHeroMethod(hero, "HeroDash"); lastDashTime = now; }
 
-            // --- DATA CAPTURE ---
             int currentHP = PlayerData.instance.health;
             if (lastHP == -1) lastHP = currentHP; 
             if (currentHP < lastHP) damageTakenSinceLastSend = true;
@@ -237,6 +209,8 @@ namespace SyntheticSoulMod
             Vector2 vel = hero.GetComponent<Rigidbody2D>().velocity;
             int maxHp = PlayerData.instance.maxHealth;
             int soul = PlayerData.instance.MPCharge;
+            
+            // 1. NEMICI (Già presente)
             List<GameStateCapture.Enemy> enemies = new List<GameStateCapture.Enemy>();
             var allEnemies = UnityEngine.Object.FindObjectsOfType<HealthManager>();
             foreach (var hm in allEnemies) 
@@ -245,7 +219,30 @@ namespace SyntheticSoulMod
                 float dist = Vector2.Distance(pos, hm.transform.position); 
                 if (dist < 50f) enemies.Add(new GameStateCapture.Enemy { Type = hm.gameObject.name, X = hm.transform.position.x, Y = hm.transform.position.y, Distance = dist, HP = hm.hp });
             } 
-            stateCapture.UpdatePlayerState(pos, lastHP, maxHp, vel, soul, enemies, damageTakenSinceLastSend, hero.cState.onGround, hero.cState.touchingWall);
+
+            // 2. PERICOLI (PROIETTILI / ATTACCHI) - NUOVO!
+            List<GameStateCapture.Danger> dangers = new List<GameStateCapture.Danger>();
+            // Cerca collider sul layer 11 (Enemy Attack)
+            int layerMask = LayerMask.GetMask("Enemy Attack");
+            Collider2D[] colliders = Physics2D.OverlapCircleAll(pos, 20f, layerMask);
+            
+            foreach (Collider2D col in colliders)
+            {
+                // Escludiamo il nemico stesso se ha il layer sbagliato, ma vogliamo i proiettili
+                // Un check semplice: se ha un HealthManager è un nemico, non un proiettile (generalmente)
+                if (col.GetComponent<HealthManager>() != null) continue;
+
+                float dist = Vector2.Distance(pos, col.transform.position);
+                
+                float vx = 0f;
+                float vy = 0f;
+                Rigidbody2D rb = col.GetComponent<Rigidbody2D>();
+                if (rb != null) { vx = rb.velocity.x; vy = rb.velocity.y; }
+
+                dangers.Add(new GameStateCapture.Danger { X = col.transform.position.x, Y = col.transform.position.y, VX = vx, VY = vy, Distance = dist });
+            }
+
+            stateCapture.UpdatePlayerState(pos, lastHP, maxHp, vel, soul, enemies, dangers, damageTakenSinceLastSend, hero.cState.onGround, hero.cState.touchingWall);
         }
     }
 }
