@@ -1,5 +1,4 @@
-  <Project Sdk="Microsoft.NET.Sdk">
-
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net472</TargetFramework>
     <AssemblyName>SyntheticSoulMod</AssemblyName>
@@ -24,12 +23,12 @@
       <HintPath>$(HKManaged)\UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Reference Include="UnityEngine.ParticleSystemModule">
-      <HintPath>$(HKManaged)\UnityEngine.ParticleSystemModule.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
     <Reference Include="UnityEngine.Physics2DModule">
       <HintPath>$(HKManaged)\UnityEngine.Physics2DModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="PlayMaker">
+      <HintPath>$(HKManaged)\PlayMaker.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Newtonsoft.Json">
@@ -37,15 +36,14 @@
       <Private>false</Private>
     </Reference>
     <Reference Include="MMHOOK_Assembly-CSharp">
-    <HintPath>$(HKManaged)\MMHOOK_Assembly-CSharp.dll</HintPath>
-    <Private>false</Private>
+      <HintPath>$(HKManaged)\MMHOOK_Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
     </Reference>
   </ItemGroup>
 
   <Target Name="CopyMod" AfterTargets="Build">
     <Copy SourceFiles="$(TargetDir)$(TargetName).dll" 
-          DestinationFolder="$(HKManaged)\Mods\SyntheticSoul" />
-    <Message Text="Synthetic Soul installata correttamente!" Importance="High" />
+      DestinationFolder="$(HKManaged)\Mods\SyntheticSoulMod" />
+    <Message Text="SyntheticSoulMod installata correttamente!" Importance="High" />
   </Target>
-
 </Project>
