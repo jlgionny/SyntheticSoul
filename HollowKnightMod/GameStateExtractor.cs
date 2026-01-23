@@ -1,12 +1,23 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 namespace SyntheticSoulMod
 {
+    // Struct per informazioni sui pericoli
+    [Serializable]
+    public class HazardInfo
+    {
+        public float relX;      // Posizione X relativa al player
+        public float relY;      // Posizione Y relativa al player
+        public int type;        // 1 = Nemico, 2 = Proiettile
+    }
+
     [Serializable]
     public class GameState
     {
+        // ========== PLAYER DATA ==========
         public float playerX;
         public float playerY;
         public float playerVelocityX;
@@ -18,6 +29,8 @@ namespace SyntheticSoulMod
         public bool canAttack;
         public bool isGrounded;
         public bool hasDoubleJump;
+
+        // ========== BOSS DATA ==========
         public float bossX;
         public float bossY;
         public int bossHealth;
@@ -26,6 +39,15 @@ namespace SyntheticSoulMod
         public float distanceToBoss;
         public bool isDead;
         public bool bossDefeated;
+
+        // ========== NUOVO: PERCEZIONE AMBIENTALE ==========
+        // Array di 5 float: distanze dal terreno in 5 direzioni
+        // [0] = Sotto, [1] = Avanti-Basso, [2] = Avanti, [3] = Avanti-Alto, [4] = Sopra
+        public float[] terrainInfo;
+
+        // Lista dei 5 pericoli più vicini (nemici minori e proiettili)
+        public List<HazardInfo> nearbyHazards;
+
         public long timestamp;
     }
 
@@ -33,7 +55,6 @@ namespace SyntheticSoulMod
     {
         private GameObject bossObject;
         private HealthManager bossHealthManager;
-        
         private List<string> bossNames = new List<string>
         {
             "False Knight",
@@ -47,6 +68,54 @@ namespace SyntheticSoulMod
             "Collector",
             "Traitor Lord"
         };
+
+        // ========== COSTANTI PER PERCEZIONE AMBIENTALE ==========
+        private const float TERRAIN_RAYCAST_MAX_DISTANCE = 5.0f;
+        private const float HAZARD_DETECTION_RADIUS = 10.0f;
+        private const int MAX_HAZARDS_TO_TRACK = 5;
+        private const int TERRAIN_LAYER = 8;        // Layer "Terrain" in Hollow Knight
+        private const int ENEMIES_LAYER = 11;       // Layer "Enemies"
+        private const int PROJECTILES_LAYER = 17;   // Layer "Projectiles"
+
+        private LayerMask terrainMask;
+        private LayerMask hazardMask;
+
+        public GameStateExtractor()
+        {
+            InitializeLayerMasks();
+        }
+
+        private void InitializeLayerMasks()
+        {
+            try
+            {
+                // LayerMask per terreno
+                terrainMask = LayerMask.GetMask("Terrain");
+                if (terrainMask == 0)
+                {
+                    terrainMask = 1 << TERRAIN_LAYER;
+                }
+
+                // LayerMask per pericoli (nemici + proiettili)
+                hazardMask = 0;
+                try { hazardMask |= LayerMask.GetMask("Enemies"); } catch { }
+                try { hazardMask |= LayerMask.GetMask("Enemy"); } catch { }
+                try { hazardMask |= LayerMask.GetMask("Projectiles"); } catch { }
+                try { hazardMask |= LayerMask.GetMask("Attack"); } catch { }
+
+                if (hazardMask == 0)
+                {
+                    // Fallback ai layer numerici
+                    hazardMask = (1 << ENEMIES_LAYER) | (1 << PROJECTILES_LAYER);
+                }
+            }
+            catch (Exception ex)
+            {
+                Modding.Logger.LogWarn($"[SyntheticSoul] Error initializing layer masks: {ex.Message}");
+                terrainMask = 1 << TERRAIN_LAYER;
+                hazardMask = (1 << ENEMIES_LAYER) | (1 << PROJECTILES_LAYER);
+            }
+        }
 
         private GameState CreateDeadState()
         {
@@ -71,6 +140,8 @@ namespace SyntheticSoulMod
                 distanceToBoss = 999f,
                 isDead = true,
                 bossDefeated = false,
+                terrainInfo = new float[5] { 5.0f, 5.0f, 5.0f, 5.0f, 5.0f },
+                nearbyHazards = new List<HazardInfo>(),
                 timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
             };
         }
@@ -99,7 +170,6 @@ namespace SyntheticSoulMod
                 try
                 {
                     var rb = hero.GetComponent<Rigidbody2D>();
-                    // FIX: Corrected Rigidbody2D validation - use .simulated instead of .isActiveAndEnabled
                     if (rb != null && rb.simulated && rb.gameObject.activeInHierarchy)
                     {
                         velocityX = rb.velocity.x;
@@ -108,8 +178,7 @@ namespace SyntheticSoulMod
                 }
                 catch (Exception rbEx)
                 {
-                    // FIX: Silently handle Rigidbody access errors during damage frames
-                    Modding.Logger.LogWarn($"[SyntheticSoul] Rigidbody2D access failed (likely during damage): {rbEx.Message}");
+                    Modding.Logger.LogWarn($"[SyntheticSoul] Rigidbody2D access failed: {rbEx.Message}");
                 }
 
                 var state = new GameState
@@ -123,7 +192,6 @@ namespace SyntheticSoulMod
                     playerMaxHealth = playerData.maxHealth,
                     playerSoul = playerData.MPCharge,
 
-                    // FIX: Safely check hero state during recoil/damage
                     canDash = !hero.cState.dashing && !hero.cState.shadowDashing && !hero.cState.recoiling,
                     canAttack = !hero.cState.attacking && !hero.cState.recoiling && !hero.cState.dead,
                     isGrounded = hero.cState.onGround,
@@ -138,10 +206,15 @@ namespace SyntheticSoulMod
                     distanceToBoss = 999f,
                     isDead = playerData.health <= 0,
                     bossDefeated = false,
+
+                    // Initialize perception arrays
+                    terrainInfo = new float[5],
+                    nearbyHazards = new List<HazardInfo>(),
+
                     timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
                 };
 
-                // Extract boss data if available
+                // Extract boss data
                 if (bossObject != null && bossHealthManager != null)
                 {
                     state.bossX = bossObject.transform.position.x;
@@ -164,31 +237,196 @@ namespace SyntheticSoulMod
 
                     state.bossDefeated = bossHealthManager.hp <= 0;
 
-                    // Calculate distance
                     float dx = state.bossX - state.playerX;
                     float dy = state.bossY - state.playerY;
                     state.distanceToBoss = Mathf.Sqrt(dx * dx + dy * dy);
 
-                    // Try to get boss state from PlayMaker FSM
                     var fsm = PlayMakerUtils.FindFsmOnGameObject(bossObject, "Control");
                     if (fsm == null)
                         fsm = PlayMakerUtils.FindFsmOnGameObject(bossObject, "Battle Control");
-                    
                     if (fsm != null)
                     {
                         state.bossState = fsm.ActiveStateName ?? "UNKNOWN";
                     }
                 }
 
+                // ========== NUOVO: ESTRAI PERCEZIONE AMBIENTALE ==========
+                ExtractTerrainInfo(hero, ref state);
+                ExtractNearbyHazards(hero, ref state);
+
                 return state;
             }
             catch (Exception e)
             {
-                // FIX: Always return valid state instead of crashing
                 Modding.Logger.LogError($"[SyntheticSoul] Error extracting state: {e.Message}\n{e.StackTrace}");
                 DesktopLogger.LogError($"ExtractState crash: {e.Message}");
                 return CreateDeadState();
             }
+        }
+
+        // ========== NUOVO: RILEVAMENTO TERRENO CON RAYCAST ==========
+        private void ExtractTerrainInfo(HeroController hero, ref GameState state)
+        {
+            try
+            {
+                Vector2 playerPos = hero.transform.position;
+                bool facingRight = hero.cState.facingRight;
+
+                // Direzione orizzontale basata su dove guarda il player
+                Vector2 forwardDir = facingRight ? Vector2.right : Vector2.left;
+
+                // 5 direzioni di raycast
+                Vector2[] directions = new Vector2[5]
+                {
+                    Vector2.down,                                      // [0] Sotto
+                    (forwardDir + Vector2.down).normalized,            // [1] Avanti-Basso (45° diagonale)
+                    forwardDir,                                        // [2] Avanti (orizzontale)
+                    (forwardDir + Vector2.up).normalized,              // [3] Avanti-Alto (45° diagonale)
+                    Vector2.up                                         // [4] Sopra
+                };
+
+                // Lancia raycast per ogni direzione
+                for (int i = 0; i < 5; i++)
+                {
+                    RaycastHit2D hit = Physics2D.Raycast(
+                        playerPos,
+                        directions[i],
+                        TERRAIN_RAYCAST_MAX_DISTANCE,
+                        terrainMask
+                    );
+
+                    if (hit.collider != null)
+                    {
+                        // Normalizza la distanza (0-1, dove 1 = max distance)
+                        state.terrainInfo[i] = Mathf.Clamp01(hit.distance / TERRAIN_RAYCAST_MAX_DISTANCE);
+                        
+                        // Debug log per i primi frame
+                        if (UnityEngine.Random.value < 0.01f) // Log 1% del tempo
+                        {
+                            Modding.Logger.Log($"[Terrain] Dir {i}: hit at {hit.distance:F2} units");
+                        }
+                    }
+                    else
+                    {
+                        // Nessun terreno trovato = distanza massima
+                        state.terrainInfo[i] = 1.0f;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Modding.Logger.LogWarn($"[SyntheticSoul] Error in ExtractTerrainInfo: {ex.Message}");
+                // Fallback: distanze massime
+                for (int i = 0; i < 5; i++)
+                {
+                    state.terrainInfo[i] = 1.0f;
+                }
+            }
+        }
+
+        // ========== NUOVO: RILEVAMENTO PERICOLI CON OVERLAPCIRCLE ==========
+        private void ExtractNearbyHazards(HeroController hero, ref GameState state)
+        {
+            try
+            {
+                Vector2 playerPos = hero.transform.position;
+                List<HazardInfo> hazards = new List<HazardInfo>();
+
+                // Trova tutti i collider nel raggio
+                Collider2D[] colliders = Physics2D.OverlapCircleAll(
+                    playerPos,
+                    HAZARD_DETECTION_RADIUS,
+                    hazardMask
+                );
+
+                foreach (var col in colliders)
+                {
+                    if (col == null || col.gameObject == null)
+                        continue;
+
+                    // FILTRO 1: Ignora il player stesso
+                    if (col.gameObject.name.Contains("Knight") || col.gameObject.layer == LayerMask.NameToLayer("Player"))
+                        continue;
+
+                    // FILTRO 2: Ignora il boss principale (già tracciato separatamente)
+                    if (bossObject != null && (col.gameObject == bossObject || col.transform.IsChildOf(bossObject.transform)))
+                        continue;
+
+                    // FILTRO 3: Ignora oggetti inattivi o invisibili
+                    if (!col.gameObject.activeInHierarchy)
+                        continue;
+
+                    // Calcola posizione relativa
+                    float relX = col.transform.position.x - playerPos.x;
+                    float relY = col.transform.position.y - playerPos.y;
+                    float distance = Mathf.Sqrt(relX * relX + relY * relY);
+
+                    // Determina il tipo (1 = Nemico, 2 = Proiettile)
+                    int hazardType = DetermineHazardType(col.gameObject);
+
+                    hazards.Add(new HazardInfo
+                    {
+                        relX = relX,
+                        relY = relY,
+                        type = hazardType
+                    });
+                }
+
+                // Ordina per distanza e prendi i 5 più vicini
+                state.nearbyHazards = hazards
+                    .OrderBy(h => h.relX * h.relX + h.relY * h.relY) // Ordina per distanza al quadrato (più veloce)
+                    .Take(MAX_HAZARDS_TO_TRACK)
+                    .ToList();
+
+                // Debug log
+                if (state.nearbyHazards.Count > 0 && UnityEngine.Random.value < 0.05f)
+                {
+                    Modding.Logger.Log($"[Hazards] Detected {state.nearbyHazards.Count} threats: " +
+                        $"Closest at ({state.nearbyHazards[0].relX:F1}, {state.nearbyHazards[0].relY:F1})");
+                }
+            }
+            catch (Exception ex)
+            {
+                Modding.Logger.LogWarn($"[SyntheticSoul] Error in ExtractNearbyHazards: {ex.Message}");
+                state.nearbyHazards = new List<HazardInfo>();
+            }
+        }
+
+        // Determina se un GameObject è un nemico (1) o un proiettile (2)
+        private int DetermineHazardType(GameObject obj)
+        {
+            string name = obj.name.ToLower();
+            int layer = obj.layer;
+
+            // ========== PROIETTILI (type = 2) ==========
+            // Controlla layer proiettili
+            if (layer == PROJECTILES_LAYER)
+                return 2;
+
+            // Controlla nomi comuni di proiettili in Hollow Knight
+            if (name.Contains("shot") || name.Contains("bullet") || name.Contains("projectile") ||
+                name.Contains("orb") || name.Contains("spell") || name.Contains("acid") ||
+                name.Contains("fireball") || name.Contains("spit") || name.Contains("blob") ||
+                name.Contains("spike ball") || name.Contains("nail"))
+                return 2;
+
+            // ========== NEMICI (type = 1) ==========
+            // Controlla se ha HealthManager (tipico dei nemici)
+            if (obj.GetComponent<HealthManager>() != null)
+                return 1;
+
+            // Controlla layer nemici
+            if (layer == ENEMIES_LAYER)
+                return 1;
+
+            // Controlla nomi comuni di nemici
+            if (name.Contains("enemy") || name.Contains("crawler") || name.Contains("fly") ||
+                name.Contains("buzzer") || name.Contains("aspid") || name.Contains("hatcher") ||
+                name.Contains("hopper") || name.Contains("mosquito"))
+                return 1;
+
+            // Default: considera come proiettile (più conservativo)
+            return 2;
         }
 
         private void FindBoss()
@@ -214,7 +452,7 @@ namespace SyntheticSoulMod
                         {
                             bossObject = hm.gameObject;
                             bossHealthManager = hm;
-                            Modding.Logger.Log($"Found boss: {hm.gameObject.name} with HP: {hm.hp}");
+                            Modding.Logger.Log($"[SyntheticSoul] Found boss: {hm.gameObject.name} with HP: {hm.hp}");
                             DesktopLogger.Log($"Boss found: {hm.gameObject.name} HP:{hm.hp}");
                             break;
                         }
@@ -223,7 +461,7 @@ namespace SyntheticSoulMod
             }
             catch (Exception e)
             {
-                Modding.Logger.LogError($"Error finding boss: {e.Message}");
+                Modding.Logger.LogError($"[SyntheticSoul] Error finding boss: {e.Message}");
                 DesktopLogger.LogError($"FindBoss error: {e.Message}");
             }
         }

@@ -43,3 +43,17 @@ Desktop.ini
 # Log generati localmente
 *.log
 modlog.txt
+
+###########################
+# FILE SPECIFICI AGENTI
+###########################
+
+# File compilati Python
+__pycache__/
+*.pyc
+
+# Modelli pesanti e log
+checkpoints/
+*.pth
+*.log
+training_log.txt
