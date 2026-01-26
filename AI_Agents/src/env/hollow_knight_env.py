@@ -1,7 +1,6 @@
 import socket
 import json
 import time
-import numpy as np
 
 
 class HollowKnightEnv:

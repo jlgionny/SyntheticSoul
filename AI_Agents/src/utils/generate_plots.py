@@ -1,4 +1,4 @@
-"""
+r"""
 Script per Generare Grafici Professionali dal Training Log
 Autore: Hollow Knight RL Training System
 Data: 2026-01-26
@@ -9,11 +9,9 @@ Usage:
 
 import argparse
 import os
-import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from pathlib import Path
 from scipy.ndimage import uniform_filter1d
 
 # Configurazione stile professionale
