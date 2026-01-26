@@ -10,7 +10,7 @@ namespace SyntheticSoulMod
             Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
             "SyntheticSoul_Debug.txt"
         );
-        
+
         private static readonly object lockObj = new object();
 
         static DesktopLogger()

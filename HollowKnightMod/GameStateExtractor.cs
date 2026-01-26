@@ -85,7 +85,7 @@ namespace SyntheticSoulMod
         private LayerMask terrainLayer;
         private LayerMask enemyLayer;
         private LayerMask hazardLayer; // Include sia Terrain che Hazards
-        
+
         // NUOVO: Traccia il numero di Mantis Lords uccise per loggare solo i cambiamenti
         private int prevMantisLordsKilled = 0;
 
@@ -262,13 +262,13 @@ namespace SyntheticSoulMod
             }
 
             // ============ TRACKING MANTIS LORDS (OTTIMIZZATO) ============
-            string[] mantisLordNames = new string[] 
-            { 
+            string[] mantisLordNames = new string[]
+            {
                 "Mantis Lord",      // Prima Mantis Lord (centrale)
                 "Mantis Lord S1",   // Seconda (sinistra)
                 "Mantis Lord S2"    // Terza (destra)
             };
-            
+
             int killedCount = 0;
             foreach (string lordName in mantisLordNames)
             {
@@ -288,9 +288,9 @@ namespace SyntheticSoulMod
                     killedCount++;
                 }
             }
-            
+
             state.mantisLordsKilled = killedCount;
-            
+
             // LOGGA SOLO QUANDO IL NUMERO CAMBIA
             if (killedCount != prevMantisLordsKilled)
             {
@@ -351,7 +351,7 @@ namespace SyntheticSoulMod
                 if (hm.hp > 50 && hm.gameObject.activeInHierarchy)
                 {
                     string name = hm.gameObject.name.ToLower();
-                    
+
                     // Escludi il giocatore
                     if (name.Contains("knight") && name.Contains("hollow"))
                         continue;

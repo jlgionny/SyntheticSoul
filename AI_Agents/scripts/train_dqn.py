@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from datetime import datetime
 
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 from src.agents.dqn_agent import DQNAgent
 from src.env.hollow_knight_env import HollowKnightEnv
 
@@ -15,7 +15,9 @@ from src.env.hollow_knight_env import HollowKnightEnv
 import subprocess
 
 
-def auto_generate_plots(log_file, checkpoint_dir, algorithm='DQN', window=20, current_episode=0):
+def auto_generate_plots(
+    log_file, checkpoint_dir, algorithm="DQN", window=20, current_episode=0
+):
     """
     Genera automaticamente grafici dal log di training in sottocartelle organizzate.
 
@@ -28,18 +30,18 @@ def auto_generate_plots(log_file, checkpoint_dir, algorithm='DQN', window=20, cu
     """
     # Crea sottocartella per l'episodio corrente
     if current_episode == 1000:  # O num_episodes finale
-        episode_folder = f'episode_{current_episode}_final'
+        episode_folder = f"episode_{current_episode}_final"
     else:
-        episode_folder = f'episode_{current_episode}'
+        episode_folder = f"episode_{current_episode}"
 
-    plots_dir = os.path.join('..', f'plots_{algorithm.lower()}', episode_folder)
+    plots_dir = os.path.join("..", f"plots_{algorithm.lower()}", episode_folder)
     os.makedirs(plots_dir, exist_ok=True)
 
     if not os.path.exists(log_file):
         print(f"[Auto Plot] Warning: Log file non trovato: {log_file}")
         return
 
-    script_path = os.path.join(os.path.dirname(__file__), 'generate_plots.py')
+    script_path = os.path.join(os.path.dirname(__file__), "generate_plots.py")
 
     if not os.path.exists(script_path):
         print(f"[Auto Plot] Warning: Script generate_plots.py non trovato")
@@ -50,24 +52,28 @@ def auto_generate_plots(log_file, checkpoint_dir, algorithm='DQN', window=20, cu
         print(f"[Auto Plot] Cartella: {plots_dir}")
         result = subprocess.run(
             [
-                sys.executable, 
+                sys.executable,
                 script_path,
-                '--log', log_file,
-                '--type', algorithm.lower(),
-                '--output', plots_dir,
-                '--window', str(window)
+                "--log",
+                log_file,
+                "--type",
+                algorithm.lower(),
+                "--output",
+                plots_dir,
+                "--window",
+                str(window),
             ],
             capture_output=True,
             text=True,
-            timeout=120
+            timeout=120,
         )
 
         if result.returncode == 0:
             print(f"[Auto Plot] ✓ Grafici generati in: {plots_dir}")
 
             # Crea anche un file info.txt nella cartella
-            info_path = os.path.join(plots_dir, 'info.txt')
-            with open(info_path, 'w') as f:
+            info_path = os.path.join(plots_dir, "info.txt")
+            with open(info_path, "w") as f:
                 f.write(f"Training Snapshot\n")
                 f.write(f"================\n")
                 f.write(f"Algorithm: {algorithm}\n")
@@ -90,6 +96,7 @@ class RewardCalculator:
     """
     Simplified Reward Function - Combat-Focused
     """
+
     def __init__(self):
         self.prev_boss_health = None
         self.episode_start_time = None
@@ -107,21 +114,25 @@ class RewardCalculator:
         self.current_step += 1
 
         # DAMAGE TO BOSS
-        if prev_state is not None and 'bossHealth' in state_dict and 'bossHealth' in prev_state:
-            boss_damage = prev_state['bossHealth'] - state_dict['bossHealth']
+        if (
+            prev_state is not None
+            and "bossHealth" in state_dict
+            and "bossHealth" in prev_state
+        ):
+            boss_damage = prev_state["bossHealth"] - state_dict["bossHealth"]
             if boss_damage > 0:
                 reward += 20.0
                 print(f"  [Reward] Boss hit: +20.0 ({boss_damage} HP damage)")
 
         # DAMAGE TAKEN
-        damage_taken = state_dict.get('damageTaken', 0)
+        damage_taken = state_dict.get("damageTaken", 0)
         if damage_taken > 0:
             damage_penalty = damage_taken * 15.0
             reward -= damage_penalty
             print(f"  [Reward] Damage taken: -{damage_penalty:.1f}")
 
         # COMBAT RANGE BONUS
-        curr_dist = state_dict.get('distanceToBoss', 100.0)
+        curr_dist = state_dict.get("distanceToBoss", 100.0)
         if 2.0 <= curr_dist <= 6.0:
             reward += 0.1
             self.steps_in_combat_range += 1
@@ -129,19 +140,23 @@ class RewardCalculator:
             self.steps_in_combat_range = 0
 
         # ATTACK INCENTIVE
-        if info is not None and 'action_name' in info:
-            action_name = info['action_name']
-            if action_name == 'ATTACK' and 2.0 <= curr_dist <= 6.0:
+        if info is not None and "action_name" in info:
+            action_name = info["action_name"]
+            if action_name == "ATTACK" and 2.0 <= curr_dist <= 6.0:
                 reward += 0.2
 
         # WALL STUCK PENALTY
-        terrain_info = state_dict.get('terrainInfo', [1.0, 1.0, 1.0, 1.0, 1.0])
-        player_vel_x = state_dict.get('playerVelocityX', 0.0)
-        player_vel_y = state_dict.get('playerVelocityY', 0.0)
+        terrain_info = state_dict.get("terrainInfo", [1.0, 1.0, 1.0, 1.0, 1.0])
+        player_vel_x = state_dict.get("playerVelocityX", 0.0)
+        player_vel_y = state_dict.get("playerVelocityY", 0.0)
 
         if len(terrain_info) >= 3:
             wall_distance = terrain_info[2]
-            is_stuck = (abs(player_vel_x) < 0.1 and abs(player_vel_y) < 0.1 and wall_distance < 0.1)
+            is_stuck = (
+                abs(player_vel_x) < 0.1
+                and abs(player_vel_y) < 0.1
+                and wall_distance < 0.1
+            )
             if is_stuck:
                 reward -= 0.5
 
@@ -153,12 +168,16 @@ class RewardCalculator:
 
         # TERMINAL STATE REWARDS
         if done:
-            if state_dict.get('isDead', False):
+            if state_dict.get("isDead", False):
                 reward -= 50.0
                 print(f"  [Reward] Episode end (death): -50.0")
-            elif state_dict.get('bossDefeated', False):
+            elif state_dict.get("bossDefeated", False):
                 reward += 500.0
-                elapsed = time.time() - self.episode_start_time if self.episode_start_time else 0
+                elapsed = (
+                    time.time() - self.episode_start_time
+                    if self.episode_start_time
+                    else 0
+                )
                 time_bonus = max(0, 100 - elapsed / 10)
                 reward += time_bonus
                 print(f"  [Reward] BOSS DEFEATED: +{500 + time_bonus:.1f}")
@@ -171,51 +190,51 @@ def preprocess_state(state_dict):
     features = []
 
     # PLAYER FEATURES (10)
-    player_x = state_dict.get('playerX', 0.0)
-    player_y = state_dict.get('playerY', 0.0)
+    player_x = state_dict.get("playerX", 0.0)
+    player_y = state_dict.get("playerY", 0.0)
     features.append(player_x / 40.0)
     features.append(player_y / 30.0)
-    features.append(np.clip(state_dict.get('playerVelocityX', 0.0) / 10.0, -1.0, 1.0))
-    features.append(np.clip(state_dict.get('playerVelocityY', 0.0) / 10.0, -1.0, 1.0))
-    features.append(state_dict.get('playerHealth', 0) / 10.0)
-    features.append(state_dict.get('playerSoul', 0) / 100.0)
-    features.append(float(state_dict.get('canDash', False)))
-    features.append(float(state_dict.get('canAttack', False)))
-    features.append(float(state_dict.get('isGrounded', False)))
-    features.append(float(state_dict.get('hasDoubleJump', False)))
+    features.append(np.clip(state_dict.get("playerVelocityX", 0.0) / 10.0, -1.0, 1.0))
+    features.append(np.clip(state_dict.get("playerVelocityY", 0.0) / 10.0, -1.0, 1.0))
+    features.append(state_dict.get("playerHealth", 0) / 10.0)
+    features.append(state_dict.get("playerSoul", 0) / 100.0)
+    features.append(float(state_dict.get("canDash", False)))
+    features.append(float(state_dict.get("canAttack", False)))
+    features.append(float(state_dict.get("isGrounded", False)))
+    features.append(float(state_dict.get("hasDoubleJump", False)))
 
     # TERRAIN INFO (5)
-    terrain_info = state_dict.get('terrainInfo', [1.0, 1.0, 1.0, 1.0, 1.0])
+    terrain_info = state_dict.get("terrainInfo", [1.0, 1.0, 1.0, 1.0, 1.0])
     if len(terrain_info) < 5:
         terrain_info = list(terrain_info) + [1.0] * (5 - len(terrain_info))
     features.extend(terrain_info[:5])
 
     # BOSS FEATURES (7)
-    boss_x = state_dict.get('bossX', 0.0)
-    boss_y = state_dict.get('bossY', 0.0)
+    boss_x = state_dict.get("bossX", 0.0)
+    boss_y = state_dict.get("bossY", 0.0)
     boss_relative_x = (boss_x - player_x) / 40.0
     boss_relative_y = (boss_y - player_y) / 30.0
     features.append(boss_relative_x)
     features.append(boss_relative_y)
-    features.append(state_dict.get('bossHealth', 0) / 1000.0)
-    distance_to_boss = state_dict.get('distanceToBoss', 50.0)
+    features.append(state_dict.get("bossHealth", 0) / 1000.0)
+    distance_to_boss = state_dict.get("distanceToBoss", 50.0)
     features.append(np.clip(distance_to_boss / 50.0, 0.0, 1.0))
     angle_to_boss = math.atan2(boss_relative_y, boss_relative_x) / math.pi
     features.append(angle_to_boss)
-    features.append(float(state_dict.get('isFacingBoss', False)))
-    boss_vel_x = state_dict.get('bossVelocityX', 0.0)
+    features.append(float(state_dict.get("isFacingBoss", False)))
+    boss_vel_x = state_dict.get("bossVelocityX", 0.0)
     features.append(np.clip(boss_vel_x / 10.0, -1.0, 1.0))
 
-    state_dict['bossRelativeX'] = boss_relative_x
-    state_dict['bossRelativeY'] = boss_relative_y
+    state_dict["bossRelativeX"] = boss_relative_x
+    state_dict["bossRelativeY"] = boss_relative_y
 
     # HAZARDS (6 features - top 2)
-    hazards = state_dict.get('nearbyHazards', [])
+    hazards = state_dict.get("nearbyHazards", [])
     if hazards:
         hazards_with_dist = []
         for h in hazards:
-            rel_x = h.get('relX', 0.0)
-            rel_y = h.get('relY', 0.0)
+            rel_x = h.get("relX", 0.0)
+            rel_y = h.get("relY", 0.0)
             dist = math.sqrt(rel_x**2 + rel_y**2)
             hazards_with_dist.append((dist, h))
         hazards_with_dist.sort(key=lambda x: x[0])
@@ -226,15 +245,17 @@ def preprocess_state(state_dict):
     for i in range(2):
         if i < len(sorted_hazards):
             h = sorted_hazards[i]
-            rel_x = h.get('relX', 0.0) / 30.0
-            rel_y = h.get('relY', 0.0) / 30.0
+            rel_x = h.get("relX", 0.0) / 30.0
+            rel_y = h.get("relY", 0.0) / 30.0
             features.append(np.clip(rel_x, -1.0, 1.0))
             features.append(np.clip(rel_y, -1.0, 1.0))
-            hazard_vel_x = h.get('velocityX', 0.0)
-            hazard_vel_y = h.get('velocityY', 0.0)
-            player_vel_x = state_dict.get('playerVelocityX', 0.0)
-            player_vel_y = state_dict.get('playerVelocityY', 0.0)
-            rel_vel_magnitude = math.sqrt((hazard_vel_x - player_vel_x)**2 + (hazard_vel_y - player_vel_y)**2)
+            hazard_vel_x = h.get("velocityX", 0.0)
+            hazard_vel_y = h.get("velocityY", 0.0)
+            player_vel_x = state_dict.get("playerVelocityX", 0.0)
+            player_vel_y = state_dict.get("playerVelocityY", 0.0)
+            rel_vel_magnitude = math.sqrt(
+                (hazard_vel_x - player_vel_x) ** 2 + (hazard_vel_y - player_vel_y) ** 2
+            )
             features.append(np.clip(rel_vel_magnitude / 20.0, 0.0, 1.0))
         else:
             features.extend([0.0, 0.0, 0.0])
@@ -253,14 +274,14 @@ def train_dqn(
     epsilon_decay=10000,
     target_update_freq=1000,
     save_freq=50,
-    checkpoint_dir='checkpoints_dqn',
-    host='localhost',
+    checkpoint_dir="checkpoints_dqn",
+    host="localhost",
     port=5555,
-    plot_freq=100
+    plot_freq=100,
 ):
     """Main training loop with organized auto-plot generation."""
 
-    checkpoint_dir_full = os.path.join('..', checkpoint_dir)
+    checkpoint_dir_full = os.path.join("..", checkpoint_dir)
     os.makedirs(checkpoint_dir_full, exist_ok=True)
 
     print(f"[Train] Connecting to Hollow Knight at {host}:{port}...")
@@ -279,10 +300,10 @@ def train_dqn(
         action_size=action_size,
         learning_rate=learning_rate,
         gamma=gamma,
-        buffer_capacity=100000
+        buffer_capacity=100000,
     )
 
-    latest_checkpoint = os.path.join(checkpoint_dir_full, 'latest.pth')
+    latest_checkpoint = os.path.join(checkpoint_dir_full, "latest.pth")
     if os.path.exists(latest_checkpoint):
         try:
             agent.load(latest_checkpoint)
@@ -293,12 +314,12 @@ def train_dqn(
     reward_calc = RewardCalculator()
     episode_rewards = []
     episode_losses = []
-    best_reward = -float('inf')
+    best_reward = -float("inf")
 
-    log_file = os.path.join(checkpoint_dir_full, 'training_log.txt')
+    log_file = os.path.join(checkpoint_dir_full, "training_log.txt")
 
     if not os.path.exists(log_file):
-        with open(log_file, 'w') as f:
+        with open(log_file, "w") as f:
             f.write("episode,total_reward,avg_loss,steps,epsilon,damage_taken\n")
 
     print(f"\n{'='*60}")
@@ -323,9 +344,11 @@ def train_dqn(
             next_state_dict, done, info = env.step(action)
             next_state = preprocess_state(next_state_dict)
 
-            reward = reward_calc.calculate_reward(next_state_dict, prev_state_dict, done, info)
+            reward = reward_calc.calculate_reward(
+                next_state_dict, prev_state_dict, done, info
+            )
             episode_reward += reward
-            damage_this_step = next_state_dict.get('damageTaken', 0)
+            damage_this_step = next_state_dict.get("damageTaken", 0)
             total_damage_taken += damage_this_step
 
             agent.store_transition(state, action, reward, next_state, done)
@@ -344,13 +367,20 @@ def train_dqn(
             state_dict = next_state_dict
 
             if step % 100 == 0:
-                curr_dist = next_state_dict.get('distanceToBoss', 0)
+                curr_dist = next_state_dict.get("distanceToBoss", 0)
                 in_range = "✓" if 2.0 <= curr_dist <= 6.0 else "✗"
-                print(f"  [Step {step}] Reward: {episode_reward:.2f}, Dist: {curr_dist:.1f} {in_range}, Dmg: {total_damage_taken}")
+                print(
+                    f"  [Step {step}] Reward: {episode_reward:.2f}, Dist: {curr_dist:.1f} {in_range}, Dmg: {total_damage_taken}"
+                )
 
             if done:
-                reason = ('Player died' if state_dict.get('isDead') else
-                          'Boss defeated' if state_dict.get('bossDefeated') else 'Unknown')
+                reason = (
+                    "Player died"
+                    if state_dict.get("isDead")
+                    else (
+                        "Boss defeated" if state_dict.get("bossDefeated") else "Unknown"
+                    )
+                )
                 print(f"  [Episode End] Reason: {reason}")
                 break
 
@@ -358,7 +388,11 @@ def train_dqn(
         episode_rewards.append(episode_reward)
         avg_loss = np.mean(episode_loss) if episode_loss else 0.0
         episode_losses.append(avg_loss)
-        avg_reward_last_10 = (np.mean(episode_rewards[-10:]) if len(episode_rewards) >= 10 else episode_reward)
+        avg_reward_last_10 = (
+            np.mean(episode_rewards[-10:])
+            if len(episode_rewards) >= 10
+            else episode_reward
+        )
 
         print(f"\n[Episode {episode+1}] Summary:")
         print(f"  Total Reward: {episode_reward:.2f}")
@@ -369,17 +403,21 @@ def train_dqn(
         print(f"  Combat Range Steps: {reward_calc.steps_in_combat_range}")
         print(f"  Total Damage Taken: {total_damage_taken}")
 
-        with open(log_file, 'a') as f:
-            f.write(f"{episode+1},{episode_reward:.2f},{avg_loss:.4f},{step+1},{epsilon:.4f},{total_damage_taken}\n")
+        with open(log_file, "a") as f:
+            f.write(
+                f"{episode+1},{episode_reward:.2f},{avg_loss:.4f},{step+1},{epsilon:.4f},{total_damage_taken}\n"
+            )
 
         if episode_reward > best_reward:
             best_reward = episode_reward
-            best_path = os.path.join(checkpoint_dir_full, 'best_model.pth')
+            best_path = os.path.join(checkpoint_dir_full, "best_model.pth")
             agent.save(best_path)
             print(f"  [NEW BEST] Saved to {best_path}")
 
         if (episode + 1) % save_freq == 0:
-            checkpoint_path = os.path.join(checkpoint_dir_full, f'episode_{episode+1}.pth')
+            checkpoint_path = os.path.join(
+                checkpoint_dir_full, f"episode_{episode+1}.pth"
+            )
             agent.save(checkpoint_path)
             agent.save(latest_checkpoint)
             print(f"  [Checkpoint] Saved to {checkpoint_path}")
@@ -392,9 +430,9 @@ def train_dqn(
             auto_generate_plots(
                 log_file=log_file,
                 checkpoint_dir=checkpoint_dir_full,
-                algorithm='DQN',
+                algorithm="DQN",
                 window=min(20, max(10, (episode + 1) // 50)),  # Smoothing adattivo
-                current_episode=episode+1
+                current_episode=episode + 1,
             )
             print(f"{'='*60}\n")
 
@@ -403,32 +441,32 @@ def train_dqn(
     print(f"{'='*60}")
     print(f"Best Reward: {best_reward:.2f}")
 
-    final_path = os.path.join(checkpoint_dir_full, 'final_model.pth')
+    final_path = os.path.join(checkpoint_dir_full, "final_model.pth")
     agent.save(final_path)
     env.close()
 
 
 if __name__ == "__main__":
     HYPERPARAMS = {
-        'num_episodes': 1000,
-        'max_steps_per_episode': 5000,
-        'batch_size': 64,
-        'learning_rate': 1e-4,
-        'gamma': 0.99,
-        'epsilon_start': 1.0,
-        'epsilon_end': 0.01,
-        'epsilon_decay': 10000,
-        'target_update_freq': 1000,
-        'save_freq': 50,
-        'checkpoint_dir': 'checkpoints',
-        'host': 'localhost',
-        'port': 5555,
-        'plot_freq': 100
+        "num_episodes": 1000,
+        "max_steps_per_episode": 5000,
+        "batch_size": 64,
+        "learning_rate": 1e-4,
+        "gamma": 0.99,
+        "epsilon_start": 1.0,
+        "epsilon_end": 0.01,
+        "epsilon_decay": 10000,
+        "target_update_freq": 1000,
+        "save_freq": 50,
+        "checkpoint_dir": "checkpoints",
+        "host": "localhost",
+        "port": 5555,
+        "plot_freq": 100,
     }
 
-    print("="*60)
+    print("=" * 60)
     print("HOLLOW KNIGHT DQN TRAINING - ORGANIZED PLOTS")
-    print("="*60)
+    print("=" * 60)
     print("\nKey Features:")
     print("  ✓ Simplified combat-focused reward")
     print("  ✓ Auto-generated plots every 100 episodes")
@@ -444,7 +482,7 @@ if __name__ == "__main__":
     print("\nHyperparameters:")
     for key, value in HYPERPARAMS.items():
         print(f"  {key}: {value}")
-    print("="*60)
+    print("=" * 60)
     print()
 
     try:
@@ -454,4 +492,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n[Train] Error during training: {e}")
         import traceback
+
         traceback.print_exc()

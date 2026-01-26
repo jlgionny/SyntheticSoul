@@ -19,10 +19,10 @@ class HollowKnightEnv:
         4: "JUMP",
         5: "ATTACK",
         6: "DASH",
-        7: "SPELL"
+        7: "SPELL",
     }
 
-    def __init__(self, host='localhost', port=5555, timeout=30.0):
+    def __init__(self, host="localhost", port=5555, timeout=30.0):
         """
         Initialize the environment.
 
@@ -46,9 +46,11 @@ class HollowKnightEnv:
             self.socket.connect((self.host, self.port))
 
             # File wrapper to use readline()
-            self.socket_file = self.socket.makefile('r', encoding='utf-8')
+            self.socket_file = self.socket.makefile("r", encoding="utf-8")
             self.connected = True
-            print(f"[Env] Connected to {self.host}:{self.port} (timeout: {self.timeout}s)")
+            print(
+                f"[Env] Connected to {self.host}:{self.port} (timeout: {self.timeout}s)"
+            )
         except Exception as e:
             print(f"[Env] Connection failed: {e}")
 
@@ -59,7 +61,7 @@ class HollowKnightEnv:
 
             # C# expects just the command string + newline
             message = f"{action_name}\n"
-            self.socket.sendall(message.encode('utf-8'))
+            self.socket.sendall(message.encode("utf-8"))
         except BrokenPipeError:
             print("[Env] Broken pipe sending action. Reconnecting...")
             self.connected = False
@@ -128,10 +130,14 @@ class HollowKnightEnv:
             attempts += 1
 
             if attempts % 4 == 0:  # Log every 2 seconds
-                print(f"[Env] Still waiting for state... ({attempts * 0.5:.1f}s elapsed)")
+                print(
+                    f"[Env] Still waiting for state... ({attempts * 0.5:.1f}s elapsed)"
+                )
 
         if state is None:
-            print("[Env] WARNING: No state received after reset - returning empty state")
+            print(
+                "[Env] WARNING: No state received after reset - returning empty state"
+            )
             return {}
 
         print(f"[Env] ✓ Reset complete - received state after {attempts * 0.5:.1f}s")
@@ -159,11 +165,11 @@ class HollowKnightEnv:
             done = True
             state = {}  # Empty fallback state
         else:
-            done = state.get('isDead', False) or state.get('bossDefeated', False)
+            done = state.get("isDead", False) or state.get("bossDefeated", False)
 
         info = {
-            'action_name': action_name,
-            'timestamp': state.get('timestamp', 0) if state else 0
+            "action_name": action_name,
+            "timestamp": state.get("timestamp", 0) if state else 0,
         }
 
         return state, done, info

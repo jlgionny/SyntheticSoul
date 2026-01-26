@@ -55,7 +55,7 @@ namespace SyntheticSoulMod
                 // Initialize TcpListener once
                 server = new TcpListener(IPAddress.Loopback, port);
                 server.Start();
-                
+
                 Modding.Logger.Log($"[SocketCommunicator] TcpListener started on port {port}");
                 DesktopLogger.Log($"TcpListener started, waiting for connections...");
 
@@ -195,7 +195,7 @@ namespace SyntheticSoulMod
                     // FIX: Connection lost during write
                     Modding.Logger.LogWarn($"[SocketCommunicator] Client disconnected during SendState: {ioEx.Message}");
                     DesktopLogger.LogWarning($"Client disconnected during SendState at {DateTime.Now:HH:mm:ss}");
-                    
+
                     // FIX: Close client but DON'T stop the server - it will accept new connections
                     CloseCurrentClient();
                 }
@@ -226,7 +226,7 @@ namespace SyntheticSoulMod
 
                     byte[] buffer = new byte[1024];
                     int bytesRead = stream.Read(buffer, 0, buffer.Length);
-                    
+
                     if (bytesRead > 0)
                     {
                         string action = Encoding.UTF8.GetString(buffer, 0, bytesRead);
