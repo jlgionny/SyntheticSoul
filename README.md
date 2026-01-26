@@ -310,7 +310,7 @@ Attualmente cerchiamo contributi per:
 - **Ottimizzazione algoritmi:** Implementazione di SAC (Soft Actor-Critic) o Rainbow DQN
 - **Reward shaping:** Miglioramenti al sistema di ricompense per convergenza più rapida
 - **Nuovi boss:** Estensione del framework ad altri boss di Godhome
-- **Hazard detection:** Migliorare la stabilità del rilevamento proiettili "boomerang"
+- **Hazard detection:** Migliorare la stabilità del rilevamento proiettili 
 - **Curriculum learning:** Implementare training progressivo su boss di difficoltà crescente
 - **Documentazione:** Tutorial video, guide avanzate, traduzione in altre lingue
 
