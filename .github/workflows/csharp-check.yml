@@ -1,0 +1,24 @@
+name: C# Format Check
+
+on: [push, pull_request]
+
+jobs:
+  csharp-quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore HollowKnightMod/SyntheticSoulMod.csproj
+        continue-on-error: true
+
+      - name: Check C# Formatting
+        run: |
+          dotnet format HollowKnightMod/ --verify-no-changes --verbosity diagnostic

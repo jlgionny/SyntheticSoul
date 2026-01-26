@@ -1,0 +1,29 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "HollowKnightMod", "HollowKnightMod", "{E6DB227D-211B-34F5-6921-5AFB74A2C288}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SyntheticSoulMod", "HollowKnightMod\SyntheticSoulMod.csproj", "{27045E99-BD54-9386-ADE2-6211AD185F59}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{27045E99-BD54-9386-ADE2-6211AD185F59}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{27045E99-BD54-9386-ADE2-6211AD185F59}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{27045E99-BD54-9386-ADE2-6211AD185F59}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{27045E99-BD54-9386-ADE2-6211AD185F59}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{27045E99-BD54-9386-ADE2-6211AD185F59} = {E6DB227D-211B-34F5-6921-5AFB74A2C288}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {8E0352D7-5B95-4BA2-B26A-2B717ECA7837}
+	EndGlobalSection
+EndGlobal

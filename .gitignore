@@ -1,0 +1,81 @@
+###########################
+# FILE DI COMPILAZIONE
+###########################
+[Bb]in/
+[Oo]bj/
+
+###########################
+# IDE E EDITOR
+###########################
+# Visual Studio Code
+.vscode/
+
+# Visual Studio (Classico)
+.vs/
+*.user
+*.userosscache
+*.sln.docstates
+*.suo
+
+# JetBrains Rider
+.idea/
+*.sln.iml
+
+###########################
+# SISTEMA OPERATIVO
+###########################
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Mac
+.DS_Store
+
+###########################
+# FILE SPECIFICI MODDING
+###########################
+
+*.dll
+*.pdb
+*.xml
+
+# Log generati localmente
+*.log
+modlog.txt
+
+###########################
+# FILE SPECIFICI AGENTI
+###########################
+
+# File compilati Python
+__pycache__/
+*.pyc
+
+# Tutte le cartelle plots con sottocartelle episodi
+plots_dqn/
+plots_ppo/
+plots/
+plots_*/
+
+# Modelli salvati
+checkpoints/
+checkpoints_dqn/
+checkpoints_ppo/
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.hdf5
+
+# Log di training
+training_log.txt
+training_log_ppo.txt
+training_log_dqn.txt
+*.log
+
+# TensorBoard logs
+tensorboard/
+runs/
+tb_logs/
+lightning_logs/

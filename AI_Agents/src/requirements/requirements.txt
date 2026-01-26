@@ -1,0 +1,9 @@
+torch
+numpy
+gymnasium
+stable-baselines3
+shimmy
+tensorboard
+flake8
+autoflake
+black
