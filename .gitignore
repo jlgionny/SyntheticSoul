@@ -52,11 +52,30 @@ modlog.txt
 __pycache__/
 *.pyc
 
-# Modelli pesanti e log
-checkpoints/
-*.pth
-*.log
-training_log.txt
+# Tutte le cartelle plots con sottocartelle episodi
+plots_dqn/
+plots_ppo/
+plots/
+plots_*/
 
+# Modelli salvati
+checkpoints/
+checkpoints_dqn/
 checkpoints_ppo/
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.hdf5
+
+# Log di training
+training_log.txt
 training_log_ppo.txt
+training_log_dqn.txt
+*.log
+
+# TensorBoard logs
+tensorboard/
+runs/
+tb_logs/
+lightning_logs/
