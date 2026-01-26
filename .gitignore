@@ -1,5 +1,5 @@
 ###########################
-# FILE DI COMPILAZIONE 
+# FILE DI COMPILAZIONE
 ###########################
 [Bb]in/
 [Oo]bj/
@@ -17,7 +17,7 @@
 *.sln.docstates
 *.suo
 
-# JetBrains Rider 
+# JetBrains Rider
 .idea/
 *.sln.iml
 
