@@ -1,27 +1,28 @@
-name: SyntheticSoul AI Quality Check
+name: Python Quality Check
 
 on: [push, pull_request]
 
 jobs:
   quality-check:
     runs-on: ubuntu-latest
+
     steps:
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-    - name: Set up Python 3.10
-      uses: actions/setup-python@v3
-      with:
-        python-version: "3.10"
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v3
+        with:
+          python-version: "3.11"
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        if [ -f AI_Agents/src/requirements/requirements.txt ]; then pip install -r AI_Agents/src/requirements/requirements.txt; fi
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f AI_Agents/src/requirements/requirements.txt ]; then pip install -r AI_Agents/src/requirements/requirements.txt; fi
 
-    - name: 1. Check Formatting (Black)
-      run: |
-        black --check AI_Agents/scripts/ AI_Agents/src/
+      - name: Check Formatting (Black)
+        run: |
+          black --check AI_Agents/scripts/ AI_Agents/src/ --extend-exclude="requirements.txt"
 
-    - name: 2. Check Logic & Style (Flake8)
-      run: |
-        flake8 AI_Agents/scripts/ AI_Agents/src/ --ignore=E501,W503 --count --show-source --statistics
+      - name: Check Logic & Style (Flake8)
+        run: |
+          flake8 AI_Agents/scripts/ AI_Agents/src/ --exclude=requirements.txt --ignore=E501,W503 --count --show-source --statistics

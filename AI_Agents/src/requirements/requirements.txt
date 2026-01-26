@@ -1,7 +1,7 @@
 torch
 numpy
 gymnasium
-stable - baselines3
+stable-baselines3
 shimmy
 tensorboard
 flake8
