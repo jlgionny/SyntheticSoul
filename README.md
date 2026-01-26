@@ -18,13 +18,13 @@
 
 ---
 
-## 📖 Introduzione
+## Introduzione
 
 **SyntheticSoul** è un framework sperimentale che collega l'ambiente di gioco di *Hollow Knight* con agenti di Intelligenza Artificiale avanzati basati su Deep Reinforcement Learning.
 
 L'obiettivo principale del progetto è addestrare un'IA in grado di completare autonomamente la sfida **Mantis Lords** nella *Hall of Gods* (Godhome). Il sistema implementa una mod C# personalizzata che espone lo stato del gioco in tempo reale e riceve comandi di input tramite socket TCP, permettendo agli agenti Python di apprendere strategie complesse di combattimento, schivata e posizionamento.
 
-### 🎯 Obiettivi del Progetto
+### Obiettivi del Progetto
 
 - Dimostrare l'applicabilità del Deep RL in ambienti di gioco complessi non nativamente progettati per l'IA
 - Sviluppare tecniche di reward shaping efficaci per boss fight dinamici
@@ -32,9 +32,9 @@ L'obiettivo principale del progetto è addestrare un'IA in grado di completare a
 
 ---
 
-## ✨ Caratteristiche
+## Caratteristiche
 
-### 🧠 Intelligenza Artificiale
+### Intelligenza Artificiale
 
 - **PPO (Proximal Policy Optimization):** Implementazione Actor-Critic con supporto **LSTM** per gestire la memoria temporale (fondamentale per tracciare i boomerang delle mantidi e predire pattern di attacco)
 - **DQN (Deep Q-Network):** Implementazione con Experience Replay Buffer e Target Network per un apprendimento stabile off-policy
@@ -45,7 +45,7 @@ L'obiettivo principale del progetto è addestrare un'IA in grado di completare a
   - Progressione specifica (tracking delle 3 Mantidi eliminate individualmente)
   - Bonus per utilizzo efficace delle meccaniche (parry, dash, healing timing)
 
-### 🛠️ Modding & Core (C#)
+### Modding & Core (C#)
 
 - **State Extraction:** Sistema di raycasting in tempo reale per rilevare terreno, muri, piattaforme e ostacoli
 - **Hazard Detection:** Rilevamento automatico di proiettili, nemici e hazard con calcolo della velocità relativa e traiettoria
@@ -55,7 +55,7 @@ L'obiettivo principale del progetto è addestrare un'IA in grado di completare a
 
 ---
 
-## 🏗 Architettura
+## Architettura
 
 Il sistema opera su un'architettura Client-Server a bassa latenza (~20Hz):
 
@@ -83,7 +83,7 @@ Il sistema opera su un'architettura Client-Server a bassa latenza (~20Hz):
 
 ---
 
-## 📂 Struttura del Progetto
+## Struttura del Progetto
 
 ```
 SyntheticSoul/
@@ -122,7 +122,7 @@ SyntheticSoul/
 
 ---
 
-## 🚀 Installazione
+## Installazione
 
 ### Prerequisiti
 
@@ -164,15 +164,6 @@ SyntheticSoul/
 git clone https://github.com/jlgionny/SyntheticSoul.git
 cd SyntheticSoul/AI_Agents
 
-# Crea ambiente virtuale
-python -m venv venv
-
-# Attiva l'ambiente virtuale
-# Windows:
-venv\Scriptsctivate
-# Linux/Mac:
-source venv/bin/activate
-
 # Installa le dipendenze
 pip install -r src/requirements/requirements.txt
 ```
@@ -186,7 +177,7 @@ pip install -r src/requirements/requirements.txt
 
 ---
 
-## 🎮 Utilizzo (Training)
+## Utilizzo (Training)
 
 ### Preparazione
 
@@ -251,7 +242,7 @@ python src/utils/generate_plots.py --log checkpoints_ppo/training_log.txt --type
 
 ---
 
-## 📊 Risultati e Metriche
+## Risultati e Metriche
 
 Il sistema produce dashboard dettagliate sull'andamento del training:
 
@@ -281,7 +272,7 @@ Il sistema genera automaticamente:
 
 ---
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
 ### Problema: "Connection Refused" in Python
 
@@ -308,7 +299,7 @@ Il sistema genera automaticamente:
 
 ---
 
-## 🤝 Contribuire
+## Contributi
 
 Le Pull Request sono benvenute! Per modifiche importanti, apri prima una issue per discutere cosa vorresti cambiare.
 
@@ -333,7 +324,7 @@ Attualmente cerchiamo contributi per:
 
 ---
 
-## 📚 Risorse e Riferimenti
+## Risorse e Riferimenti
 
 - **Paper PPO:** [Proximal Policy Optimization Algorithms](https://arxiv.org/abs/1707.06347)
 - **Paper DQN:** [Playing Atari with Deep Reinforcement Learning](https://arxiv.org/abs/1312.5602)
@@ -342,29 +333,30 @@ Attualmente cerchiamo contributi per:
 
 ---
 
-## 📄 Licenza
-
-Distribuito sotto licenza **MIT**. Vedi [LICENSE](LICENSE) per maggiori informazioni.
+## Licenza
 
 Questo progetto non è affiliato con o approvato da Team Cherry. Hollow Knight è un marchio registrato di Team Cherry.
 
 ---
 
-## 👤 Autori
+## Autori
 
 **jlgionny**
 
 - GitHub: [@jlgionny](https://github.com/jlgionny)
 
-**jlgionny**
+**hiroo0**
+- GitHub: [@hiroo0](https://github.com/hiroo0)
 
-**jlgionny**
+**Domzz69**
+- GitHub: [@Domzz69](https://github.com/Domzz69)
 
-**jlgionny**
+**Alehart**
+- GitHub: [@Alehart](https://github.com/Alehart)
 
 ---
 
-## 🙏 Ringraziamenti
+## Ringraziamenti
 
 - **Team Cherry** per aver creato Hollow Knight
 - **HK Modding Community** per la Modding API e supporto
