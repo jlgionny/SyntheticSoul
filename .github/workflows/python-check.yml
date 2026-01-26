@@ -14,10 +14,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install linting tools only
         run: |
           python -m pip install --upgrade pip
-          if [ -f AI_Agents/src/requirements/requirements.txt ]; then pip install -r AI_Agents/src/requirements/requirements.txt; fi
+          pip install black flake8
 
       - name: Check Formatting (Black)
         run: |
