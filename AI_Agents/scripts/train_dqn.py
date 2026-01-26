@@ -281,7 +281,10 @@ def train_dqn(
 ):
     """Main training loop with organized auto-plot generation."""
 
-    checkpoint_dir_full = os.path.join("..", checkpoint_dir)
+    # Salva i checkpoint nella cartella AI_Agents
+    ai_agents_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    checkpoint_dir_full = os.path.join(ai_agents_root, checkpoint_dir)
+
     os.makedirs(checkpoint_dir_full, exist_ok=True)
 
     print(f"[Train] Connecting to Hollow Knight at {host}:{port}...")

@@ -90,12 +90,17 @@ class RewardCalculator:
         self.prev_mantis_killed = 0
         self.episode_start_time = None
 
-    def reset(self):
+    def reset(self, initial_state=None):
         self.prev_boss_health = None
         self.prev_player_health = None
         self.prev_distance_to_boss = None
-        self.prev_mantis_killed = 0
+        # Leggi il valore iniziale dall'environment invece di resettare a 0
+        if initial_state is not None:
+            self.prev_mantis_killed = initial_state.get("mantisLordsKilled", 0)
+        else:
+            self.prev_mantis_killed = 0
         self.episode_start_time = time.time()
+
 
     def calculate_reward(self, state_dict, prev_state, done, info=None):
         reward = 0.0
@@ -276,7 +281,9 @@ def train_ppo(
 ):
     """Training PPO con grafici organizzati in sottocartelle."""
 
-    checkpoint_dir_full = os.path.join("..", checkpoint_dir)
+    # Salva i checkpoint nella cartella AI_Agents
+    ai_agents_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    checkpoint_dir_full = os.path.join(ai_agents_root, checkpoint_dir)
     os.makedirs(checkpoint_dir_full, exist_ok=True)
 
     print(f"[Train PPO] Connecting to Hollow Knight at {host}:{port}...")
@@ -327,7 +334,7 @@ def train_ppo(
     for episode in range(num_episodes):
         state_dict = env.reset()
         state = preprocess_state(state_dict)
-        reward_calc.reset()
+        reward_calc.reset(initial_state=state_dict)
         agent.reset_hidden()
 
         episode_reward = 0.0
@@ -379,14 +386,14 @@ def train_ppo(
             if len(episode_rewards) >= 10
             else episode_reward
         )
-        mantis_killed = state_dict.get("mantisLordsKilled", 0)
-
+        # Usa il valore tracciato dalla RewardCalculator invece di state_dict
+        mantis_killed = reward_calc.prev_mantis_killed
         print(f"\n[Episode {episode + 1}] Summary:")
         print(f"  Total Reward: {episode_reward:.2f}")
         print(f"  Steps in Episode: {step + 1}")
         print(f"  Global Steps: {global_step}")
         print(f"  Mantis Lords Killed: {mantis_killed}/3")
-        print(f"  Avg Reward (last 10): {avg_reward_last_10:.2f}")
+
 
         with open(log_file, "a") as f:
             f.write(

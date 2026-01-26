@@ -1,9 +1,0 @@
-# Forza LF per tutti i file Python
-*.py text eol=lf
-
-# Forza LF per file di testo comuni
-*.txt text eol=lf
-*.yml text eol=lf
-*.yaml text eol=lf
-*.json text eol=lf
-*.md text eol=lf
