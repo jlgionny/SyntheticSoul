@@ -12,8 +12,6 @@
 
 **Agenti di Deep Reinforcement Learning (PPO & DQN) addestrati per sconfiggere le Mantis Lords nella Hall of Gods di Hollow Knight.**
 
-[Caratteristiche](#-caratteristiche) • [Architettura](#-architettura) • [Installazione](#-installazione) • [Training](#-training) • [Risultati](#-risultati) • [Contribuire](#-contribuire)
-
 </div>
 
 ---
