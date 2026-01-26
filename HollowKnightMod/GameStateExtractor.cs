@@ -47,12 +47,9 @@ namespace SyntheticSoulMod
         public bool isFacingBoss;
         public bool bossDefeated;
 
-<<<<<<< HEAD
         // ============ MANTIS LORDS TRACKING ============
         public int mantisLordsKilled;
 
-=======
->>>>>>> a93ba62a58f8598d08530b2cf0784a0d353291b5
         // ============ HAZARDS (Projectiles, Enemies, Spikes) ============
         public List<HazardInfo> nearbyHazards;
 
@@ -61,10 +58,7 @@ namespace SyntheticSoulMod
             terrainInfo = new float[5];
             nearbyHazards = new List<HazardInfo>();
             damageTaken = 0;
-<<<<<<< HEAD
             mantisLordsKilled = 0;
-=======
->>>>>>> a93ba62a58f8598d08530b2cf0784a0d353291b5
         }
     }
 
@@ -91,22 +85,15 @@ namespace SyntheticSoulMod
         private LayerMask terrainLayer;
         private LayerMask enemyLayer;
         private LayerMask hazardLayer; // Include sia Terrain che Hazards
-<<<<<<< HEAD
         
         // NUOVO: Traccia il numero di Mantis Lords uccise per loggare solo i cambiamenti
         private int prevMantisLordsKilled = 0;
-=======
->>>>>>> a93ba62a58f8598d08530b2cf0784a0d353291b5
 
         public GameStateExtractor()
         {
             terrainLayer = LayerMask.GetMask("Terrain");
             enemyLayer = LayerMask.GetMask("Enemies");
             hazardLayer = LayerMask.GetMask("Terrain", "Hazards");
-<<<<<<< HEAD
-=======
-
->>>>>>> a93ba62a58f8598d08530b2cf0784a0d353291b5
             DesktopLogger.Log($"[Extractor] Initialized with layers - Terrain: {terrainLayer.value}, Hazards: {hazardLayer.value}");
         }
 
@@ -165,7 +152,6 @@ namespace SyntheticSoulMod
             }
 
             state.canDash = !hero.cState.dashing &&
-<<<<<<< HEAD
                            !hero.cState.backDashing &&
                            !hero.cState.shadowDashing &&
                            !hero.cState.dashCooldown;
@@ -174,16 +160,6 @@ namespace SyntheticSoulMod
                              !hero.cState.recoiling &&
                              !hero.cState.dead &&
                              !hero.cState.hazardRespawning;
-=======
-                            !hero.cState.backDashing &&
-                            !hero.cState.shadowDashing &&
-                            !hero.cState.dashCooldown;
-
-            state.canAttack = !hero.cState.attacking &&
-                              !hero.cState.recoiling &&
-                              !hero.cState.dead &&
-                              !hero.cState.hazardRespawning;
->>>>>>> a93ba62a58f8598d08530b2cf0784a0d353291b5
 
             state.isGrounded = hero.cState.onGround;
             state.isDead = hero.cState.dead;
@@ -230,27 +206,15 @@ namespace SyntheticSoulMod
         private float RaycastDistance(Vector2 origin, Vector2 direction, float maxDistance, LayerMask layer)
         {
             RaycastHit2D hit = Physics2D.Raycast(origin, direction, maxDistance, layer);
-<<<<<<< HEAD
-=======
-
->>>>>>> a93ba62a58f8598d08530b2cf0784a0d353291b5
             if (hit.collider != null)
             {
                 return hit.distance;
             }
-<<<<<<< HEAD
-=======
-
->>>>>>> a93ba62a58f8598d08530b2cf0784a0d353291b5
             return maxDistance;
         }
 
         /// <summary>
-<<<<<<< HEAD
         /// Estrae informazioni sul boss con ENHANCED DIRECTIONAL AWARENESS e Mantis Lords Tracking.
-=======
-        /// Estrae informazioni sul boss con ENHANCED DIRECTIONAL AWARENESS.
->>>>>>> a93ba62a58f8598d08530b2cf0784a0d353291b5
         /// </summary>
         private void ExtractBossState(HeroController hero, GameState state)
         {
@@ -266,10 +230,6 @@ namespace SyntheticSoulMod
 
                 float dx = bossPos.x - playerPos.x;
                 float dy = bossPos.y - playerPos.y;
-<<<<<<< HEAD
-=======
-
->>>>>>> a93ba62a58f8598d08530b2cf0784a0d353291b5
                 state.distanceToBoss = Mathf.Sqrt(dx * dx + dy * dy);
                 state.bossRelativeX = dx / 20.0f;
                 state.bossRelativeY = dy / 20.0f;
@@ -300,7 +260,6 @@ namespace SyntheticSoulMod
                 state.isFacingBoss = false;
                 state.bossDefeated = false;
             }
-<<<<<<< HEAD
 
             // ============ TRACKING MANTIS LORDS (OTTIMIZZATO) ============
             string[] mantisLordNames = new string[] 
@@ -340,10 +299,6 @@ namespace SyntheticSoulMod
             }
         }
 
-=======
-        }
-
->>>>>>> a93ba62a58f8598d08530b2cf0784a0d353291b5
         /// <summary>
         /// Trova il GameObject del boss nella scena.
         /// </summary>
@@ -389,22 +344,15 @@ namespace SyntheticSoulMod
                 }
             }
 
-<<<<<<< HEAD
             // Fallback: cerca qualsiasi HealthManager con hp > 50
-=======
->>>>>>> a93ba62a58f8598d08530b2cf0784a0d353291b5
             var healthManagers = GameObject.FindObjectsOfType<HealthManager>();
             foreach (var hm in healthManagers)
             {
                 if (hm.hp > 50 && hm.gameObject.activeInHierarchy)
                 {
                     string name = hm.gameObject.name.ToLower();
-<<<<<<< HEAD
                     
                     // Escludi il giocatore
-=======
-
->>>>>>> a93ba62a58f8598d08530b2cf0784a0d353291b5
                     if (name.Contains("knight") && name.Contains("hollow"))
                         continue;
 
@@ -434,10 +382,6 @@ namespace SyntheticSoulMod
 
             // ============ 1. BOOMERANG DELLE MANTIDI ============
             GameObject[] allObjects = GameObject.FindObjectsOfType<GameObject>();
-<<<<<<< HEAD
-=======
-
->>>>>>> a93ba62a58f8598d08530b2cf0784a0d353291b5
             foreach (var obj in allObjects)
             {
                 if (obj == null || !obj.activeInHierarchy) continue;
@@ -521,23 +465,13 @@ namespace SyntheticSoulMod
             foreach (var dir in spikeDirections)
             {
                 RaycastHit2D hit = Physics2D.Raycast(playerPos, dir, HAZARD_DETECTION_RADIUS, hazardLayer);
-<<<<<<< HEAD
-=======
-
->>>>>>> a93ba62a58f8598d08530b2cf0784a0d353291b5
                 if (hit.collider != null)
                 {
                     string hitName = hit.collider.gameObject.name.ToLower();
                     bool isSpike = hitName.Contains("spike") ||
-<<<<<<< HEAD
                                    hitName.Contains("thorn") ||
                                    hitName.Contains("hazard") ||
                                    hit.collider.gameObject.layer == LayerMask.NameToLayer("Hazards");
-=======
-                                  hitName.Contains("thorn") ||
-                                  hitName.Contains("hazard") ||
-                                  hit.collider.gameObject.layer == LayerMask.NameToLayer("Hazards");
->>>>>>> a93ba62a58f8598d08530b2cf0784a0d353291b5
 
                     if (isSpike && hit.distance < 10f)
                     {
@@ -582,15 +516,9 @@ namespace SyntheticSoulMod
                 }
             }
 
-<<<<<<< HEAD
             // Ordina per distanza e prendi i più vicini (6 invece di 3 per Mantis Lords)
             hazards = hazards.OrderBy(h => h.distance).ToList();
             state.nearbyHazards = hazards.Take(MAX_HAZARDS * 2).ToList(); // 6 hazard totali
-=======
-            // Ordina per distanza e prendi i più vicini
-            hazards = hazards.OrderBy(h => h.distance).ToList();
-            state.nearbyHazards = hazards.Take(MAX_HAZARDS * 2).ToList(); // Aumenta a 6 per le Mantis Lords
->>>>>>> a93ba62a58f8598d08530b2cf0784a0d353291b5
 
             if (hazards.Count > 0)
             {
@@ -604,10 +532,7 @@ namespace SyntheticSoulMod
         private GameState GetDefaultState()
         {
             var state = new GameState();
-<<<<<<< HEAD
 
-=======
->>>>>>> a93ba62a58f8598d08530b2cf0784a0d353291b5
             state.playerX = 0f;
             state.playerY = 0f;
             state.playerVelocityX = 0f;
@@ -635,10 +560,7 @@ namespace SyntheticSoulMod
             state.bossRelativeY = 0f;
             state.isFacingBoss = false;
             state.bossDefeated = false;
-<<<<<<< HEAD
             state.mantisLordsKilled = 0;
-=======
->>>>>>> a93ba62a58f8598d08530b2cf0784a0d353291b5
 
             return state;
         }

@@ -264,7 +264,7 @@ def train_dqn(
     epsilon_decay=10000,
     target_update_freq=1000,
     save_freq=50,
-    checkpoint_dir='checkpoints',
+    checkpoint_dir='checkpoints_dqn',
     host='localhost',
     port=5555
 ):
