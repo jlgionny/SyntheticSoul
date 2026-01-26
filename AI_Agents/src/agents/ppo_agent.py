@@ -90,7 +90,7 @@ class PPOAgent:
         print(
             f"[PPOAgent] Initialized with state_size={state_size}, action_size={action_size}"
         )
-        print(f"[PPOAgent] Hidden size: 384, LSTM: Enabled")
+        print("[PPOAgent] Hidden size: 384, LSTM: Enabled")
 
     def select_action(self, state):
         """

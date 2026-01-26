@@ -1,15 +1,16 @@
 import os
 import sys
+import subprocess
 import time
 import numpy as np
 from datetime import datetime
 
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 from src.agents.ppo_agent import PPOAgent
 from src.env.hollow_knight_env import HollowKnightEnv
 
 # ============ AUTO PLOT GENERATOR IMPORT ============
-import subprocess
 
 
 def auto_generate_plots(
@@ -31,11 +32,11 @@ def auto_generate_plots(
     script_path = os.path.join(os.path.dirname(__file__), "generate_plots.py")
 
     if not os.path.exists(script_path):
-        print(f"[Auto Plot] Warning: Script generate_plots.py non trovato")
+        print("[Auto Plot] Warning: Script generate_plots.py non trovato")
         return
 
     try:
-        print(f"\n[Auto Plot] Generazione grafici in corso...")
+        print("\n[Auto Plot] Generazione grafici in corso...")
         print(f"[Auto Plot] Cartella: {plots_dir}")
         result = subprocess.run(
             [
@@ -61,20 +62,20 @@ def auto_generate_plots(
             # Info file
             info_path = os.path.join(plots_dir, "info.txt")
             with open(info_path, "w") as f:
-                f.write(f"Training Snapshot\n")
-                f.write(f"================\n")
+                f.write("Training Snapshot\n")
+                f.write("================\n")
                 f.write(f"Algorithm: {algorithm}\n")
                 f.write(f"Episode: {current_episode}\n")
                 f.write(f"Smoothing Window: {window}\n")
                 f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
         else:
-            print(f"[Auto Plot] ✗ Errore durante generazione:")
+            print("[Auto Plot] ✗ Errore durante generazione:")
             if result.stderr:
                 print(result.stderr[:500])
 
     except subprocess.TimeoutExpired:
-        print(f"[Auto Plot] ✗ Timeout durante generazione grafici")
+        print("[Auto Plot] ✗ Timeout durante generazione grafici")
     except Exception as e:
         print(f"[Auto Plot] ✗ Errore: {e}")
 
@@ -194,7 +195,7 @@ class RewardCalculator:
         if done:
             if state_dict.get("isDead", False):
                 reward -= 150.0
-                print(f"  [Reward] Player died: -150.0")
+                print("  [Reward] Player died: -150.0")
             elif state_dict.get("bossDefeated", False):
                 health_bonus = state_dict.get("playerHealth", 0) * 50.0
                 total_victory = 500.0 + health_bonus
@@ -304,7 +305,7 @@ def train_ppo(
     if os.path.exists(latest_checkpoint):
         try:
             agent.load(latest_checkpoint)
-            print(f"[Train PPO] Resumed from checkpoint")
+            print("[Train PPO] Resumed from checkpoint")
         except Exception as e:
             print(f"[Train PPO] Could not load checkpoint: {e}")
 
@@ -332,7 +333,7 @@ def train_ppo(
         episode_reward = 0.0
         prev_state_dict = None
 
-        print(f"\n[Episode {episode+1}/{num_episodes}] Starting...")
+        print(f"\n[Episode {episode + 1}/{num_episodes}] Starting...")
 
         for step in range(max_steps_per_episode):
             global_step += 1
@@ -380,16 +381,16 @@ def train_ppo(
         )
         mantis_killed = state_dict.get("mantisLordsKilled", 0)
 
-        print(f"\n[Episode {episode+1}] Summary:")
+        print(f"\n[Episode {episode + 1}] Summary:")
         print(f"  Total Reward: {episode_reward:.2f}")
-        print(f"  Steps in Episode: {step+1}")
+        print(f"  Steps in Episode: {step + 1}")
         print(f"  Global Steps: {global_step}")
         print(f"  Mantis Lords Killed: {mantis_killed}/3")
         print(f"  Avg Reward (last 10): {avg_reward_last_10:.2f}")
 
         with open(log_file, "a") as f:
             f.write(
-                f"{episode+1},{episode_reward:.2f},{step+1},{global_step},{mantis_killed}\n"
+                f"{episode + 1},{episode_reward:.2f},{step + 1},{global_step},{mantis_killed}\n"
             )
 
         if episode_reward > best_reward:
@@ -400,7 +401,7 @@ def train_ppo(
 
         if (episode + 1) % save_freq == 0:
             checkpoint_path = os.path.join(
-                checkpoint_dir_full, f"episode_{episode+1}.pth"
+                checkpoint_dir_full, f"episode_{episode + 1}.pth"
             )
             agent.save(checkpoint_path)
             agent.save(latest_checkpoint)
@@ -409,7 +410,7 @@ def train_ppo(
         # ============ AUTO GENERATE PLOTS IN ORGANIZED FOLDERS ============
         if (episode + 1) % plot_freq == 0 or (episode + 1) == num_episodes:
             print(f"\n{'='*60}")
-            print(f"[PLOTS] Generazione grafici episodio {episode+1}/{num_episodes}")
+            print(f"[PLOTS] Generazione grafici episodio {episode + 1}/{num_episodes}")
             print(f"{'='*60}")
             auto_generate_plots(
                 log_file=log_file,
@@ -421,7 +422,7 @@ def train_ppo(
             print(f"{'='*60}\n")
 
     print(f"\n{'='*60}")
-    print(f"PPO Training Completed!")
+    print("PPO Training Completed!")
     print(f"{'='*60}")
     print(f"Best Reward: {best_reward:.2f}")
 

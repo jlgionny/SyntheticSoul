@@ -45,7 +45,7 @@ class HollowKnightEnv:
             self.socket.connect((self.host, self.port))
 
             # File wrapper to use readline()
-            self.socket_file = self.socket.makefile("r", encoding="utf-8")
+            self.socket_file = self.socket.makefile("r", encoding="utf - 8")
             self.connected = True
             print(
                 f"[Env] Connected to {self.host}:{self.port} (timeout: {self.timeout}s)"
@@ -60,7 +60,7 @@ class HollowKnightEnv:
 
             # C# expects just the command string + newline
             message = f"{action_name}\n"
-            self.socket.sendall(message.encode("utf-8"))
+            self.socket.sendall(message.encode("utf - 8"))
         except BrokenPipeError:
             print("[Env] Broken pipe sending action. Reconnecting...")
             self.connected = False
@@ -105,11 +105,11 @@ class HollowKnightEnv:
         2. Terminal state sent to Python
         3. 3.0s death animation delay
         4. Scene reload initiated
-        5. Scene loads (~2-3s)
+        5. Scene loads (~2 - 3s)
         6. Hero restoration
         7. First state sent
 
-        Total: ~5-6 seconds expected
+        Total: ~5 - 6 seconds expected
         """
         print("[Env] Reset requested - waiting for new episode state...")
 
@@ -147,7 +147,7 @@ class HollowKnightEnv:
         Execute one action and receive the next state.
 
         Args:
-            action: Integer action index (0-7)
+            action: Integer action index (0 - 7)
 
         Returns:
             state: Dictionary containing game state
@@ -178,14 +178,14 @@ class HollowKnightEnv:
         if self.socket_file:
             try:
                 self.socket_file.close()
-            except:
+            except Exception:
                 pass
 
         if self.socket:
             try:
                 self.socket.close()
                 print("[Env] Connection closed")
-            except:
+            except Exception:
                 pass
 
         self.connected = False

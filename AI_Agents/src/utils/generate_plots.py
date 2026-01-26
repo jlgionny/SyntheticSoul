@@ -1,7 +1,7 @@
 r"""
 Script per Generare Grafici Professionali dal Training Log
 Autore: Hollow Knight RL Training System
-Data: 2026-01-26
+Data: 2026 - 01 - 26
 
 Usage:
     python AI_Agents\generate_plots.py --log checkpoints\training_log.txt --type dqn --output plots_dqn\
@@ -293,7 +293,7 @@ def plot_distance_vs_reward(df, output_dir, algorithm="DQN"):
     cbar = plt.colorbar(scatter, ax=ax)
     cbar.set_label("Episode", fontweight="bold")
 
-    # Zona ottimale (2-6 per DQN, 5-8 per PPO)
+    # Zona ottimale (2 - 6 per DQN, 5 - 8 per PPO)
     if algorithm.upper() == "DQN":
         ax.axvspan(2, 6, alpha=0.2, color="green", label="Optimal Range [2, 6]")
     else:

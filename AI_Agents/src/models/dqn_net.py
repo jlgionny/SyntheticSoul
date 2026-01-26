@@ -8,7 +8,7 @@ class DQN(nn.Module):
     Deep Q-Network per l'agente di Hollow Knight.
 
     Architettura:
-    - Input: stato del gioco (player, boss, hazards, environment) ~20-25 features
+    - Input: stato del gioco (player, boss, hazards, environment) ~20 - 25 features
     - Hidden layers: 128 -> 256 -> 128 neuroni con ReLU
     - Output: 8 Q-values (una per ogni azione)
 
@@ -202,14 +202,16 @@ class DuelingDQN(nn.Module):
 # Esempio di utilizzo
 if __name__ == "__main__":
     # Parametri
-    STATE_SIZE = 25  # player(13) + boss(5) + hazards(5*3=15) + environment(4) = ~25-30
+    STATE_SIZE = (
+        25  # player(13) + boss(5) + hazards(5*3=15) + environment(4) = ~25 - 30
+    )
     ACTION_SIZE = 8  # Left, Right, Up, Down, Jump, Attack, Dash, Cast
 
     # Crea la rete
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dqn = DQN(STATE_SIZE, ACTION_SIZE).to(device)
 
-    print(f"DQN Network Architecture:")
+    print("DQN Network Architecture:")
     print(dqn)
     print(f"\nTotal parameters: {sum(p.numel() for p in dqn.parameters())}")
 

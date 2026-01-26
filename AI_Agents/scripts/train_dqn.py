@@ -1,16 +1,18 @@
 import os
 import sys
+import subprocess
 import time
 import math
 import numpy as np
 from datetime import datetime
 
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
+
 from src.agents.dqn_agent import DQNAgent
 from src.env.hollow_knight_env import HollowKnightEnv
 
 # ============ AUTO PLOT GENERATOR IMPORT ============
-import subprocess
 
 
 def auto_generate_plots(
@@ -42,11 +44,11 @@ def auto_generate_plots(
     script_path = os.path.join(os.path.dirname(__file__), "generate_plots.py")
 
     if not os.path.exists(script_path):
-        print(f"[Auto Plot] Warning: Script generate_plots.py non trovato")
+        print("[Auto Plot] Warning: Script generate_plots.py non trovato")
         return
 
     try:
-        print(f"\n[Auto Plot] Generazione grafici in corso...")
+        print("\n[Auto Plot] Generazione grafici in corso...")
         print(f"[Auto Plot] Cartella: {plots_dir}")
         result = subprocess.run(
             [
@@ -72,20 +74,20 @@ def auto_generate_plots(
             # Crea anche un file info.txt nella cartella
             info_path = os.path.join(plots_dir, "info.txt")
             with open(info_path, "w") as f:
-                f.write(f"Training Snapshot\n")
-                f.write(f"================\n")
+                f.write("Training Snapshot\n")
+                f.write("================\n")
                 f.write(f"Algorithm: {algorithm}\n")
                 f.write(f"Episode: {current_episode}\n")
                 f.write(f"Smoothing Window: {window}\n")
                 f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
         else:
-            print(f"[Auto Plot] ✗ Errore durante generazione:")
+            print("[Auto Plot] ✗ Errore durante generazione:")
             if result.stderr:
                 print(result.stderr[:500])
 
     except subprocess.TimeoutExpired:
-        print(f"[Auto Plot] ✗ Timeout durante generazione grafici")
+        print("[Auto Plot] ✗ Timeout durante generazione grafici")
     except Exception as e:
         print(f"[Auto Plot] ✗ Errore: {e}")
 
@@ -168,7 +170,7 @@ class RewardCalculator:
         if done:
             if state_dict.get("isDead", False):
                 reward -= 50.0
-                print(f"  [Reward] Episode end (death): -50.0")
+                print("  [Reward] Episode end (death): -50.0")
             elif state_dict.get("bossDefeated", False):
                 reward += 500.0
                 elapsed = (
@@ -290,7 +292,7 @@ def train_dqn(
     action_size = 8
 
     print(f"[Train] State size: {state_size}, Action size: {action_size}")
-    print(f"[Train] Using SIMPLIFIED reward system (combat-focused)")
+    print("[Train] Using SIMPLIFIED reward system (combat-focused)")
     print(f"[Train] Grafici organizzati in sottocartelle ogni {plot_freq} episodi")
 
     agent = DQNAgent(
@@ -305,7 +307,7 @@ def train_dqn(
     if os.path.exists(latest_checkpoint):
         try:
             agent.load(latest_checkpoint)
-            print(f"[Train] Resumed from checkpoint")
+            print("[Train] Resumed from checkpoint")
         except Exception as e:
             print(f"[Train] Could not load checkpoint: {e}")
 
@@ -334,7 +336,7 @@ def train_dqn(
         prev_state_dict = None
         total_damage_taken = 0
 
-        print(f"\n[Episode {episode+1}/{num_episodes}] Starting...")
+        print(f"\n[Episode {episode + 1}/{num_episodes}] Starting...")
 
         for step in range(max_steps_per_episode):
             epsilon = agent.get_epsilon(epsilon_start, epsilon_end, epsilon_decay)
@@ -392,10 +394,10 @@ def train_dqn(
             else episode_reward
         )
 
-        print(f"\n[Episode {episode+1}] Summary:")
+        print(f"\n[Episode {episode + 1}] Summary:")
         print(f"  Total Reward: {episode_reward:.2f}")
         print(f"  Avg Loss: {avg_loss:.4f}")
-        print(f"  Steps: {step+1}")
+        print(f"  Steps: {step + 1}")
         print(f"  Epsilon: {epsilon:.4f}")
         print(f"  Avg Reward (last 10): {avg_reward_last_10:.2f}")
         print(f"  Combat Range Steps: {reward_calc.steps_in_combat_range}")
@@ -403,7 +405,7 @@ def train_dqn(
 
         with open(log_file, "a") as f:
             f.write(
-                f"{episode+1},{episode_reward:.2f},{avg_loss:.4f},{step+1},{epsilon:.4f},{total_damage_taken}\n"
+                f"{episode + 1},{episode_reward:.2f},{avg_loss:.4f},{step + 1},{epsilon:.4f},{total_damage_taken}\n"
             )
 
         if episode_reward > best_reward:
@@ -414,7 +416,7 @@ def train_dqn(
 
         if (episode + 1) % save_freq == 0:
             checkpoint_path = os.path.join(
-                checkpoint_dir_full, f"episode_{episode+1}.pth"
+                checkpoint_dir_full, f"episode_{episode + 1}.pth"
             )
             agent.save(checkpoint_path)
             agent.save(latest_checkpoint)
@@ -423,7 +425,7 @@ def train_dqn(
         # ============ AUTO GENERATE PLOTS IN ORGANIZED FOLDERS ============
         if (episode + 1) % plot_freq == 0 or (episode + 1) == num_episodes:
             print(f"\n{'='*60}")
-            print(f"[PLOTS] Generazione grafici episodio {episode+1}/{num_episodes}")
+            print(f"[PLOTS] Generazione grafici episodio {episode + 1}/{num_episodes}")
             print(f"{'='*60}")
             auto_generate_plots(
                 log_file=log_file,
@@ -435,7 +437,7 @@ def train_dqn(
             print(f"{'='*60}\n")
 
     print(f"\n{'='*60}")
-    print(f"Training Completed!")
+    print("Training Completed!")
     print(f"{'='*60}")
     print(f"Best Reward: {best_reward:.2f}")
 
