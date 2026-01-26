@@ -16,7 +16,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.ndimage import uniform_filter1d
-import numpy as np
 
 # Configurazione stile professionale
 sns.set_theme(style="whitegrid", palette="deep")
@@ -140,13 +139,15 @@ def plot_loss_unified(df, output_dir, algorithm="DQN", window=20):
 
     if algorithm.upper() == "DQN":
         if "avg_loss" not in df.columns:
-            print(f"⚠ Colonna 'avg_loss' non trovata nel log DQN")
+            print("⚠ Colonna 'avg_loss' non trovata nel log DQN")
             return
 
         losses = df["avg_loss"].values
         smoothed = smooth(losses, window=window)
 
-        ax.plot(episodes, losses, alpha=0.3, color="#ff7f0e", linewidth=1, label="Raw Loss")
+        ax.plot(
+            episodes, losses, alpha=0.3, color="#ff7f0e", linewidth=1, label="Raw Loss"
+        )
         ax.plot(
             episodes,
             smoothed,
@@ -162,7 +163,7 @@ def plot_loss_unified(df, output_dir, algorithm="DQN", window=20):
         has_critic = "critic_loss" in df.columns
 
         if not has_actor and not has_critic:
-            print(f"⚠ Colonne 'actor_loss' o 'critic_loss' non trovate nel log PPO")
+            print("⚠ Colonne 'actor_loss' o 'critic_loss' non trovate nel log PPO")
             return
 
         if has_actor and has_critic:
@@ -172,7 +173,14 @@ def plot_loss_unified(df, output_dir, algorithm="DQN", window=20):
             combined_loss = (actor_loss + critic_loss) / 2
             smoothed = smooth(combined_loss, window=window)
 
-            ax.plot(episodes, combined_loss, alpha=0.3, color="#ff7f0e", linewidth=1, label="Raw Combined Loss")
+            ax.plot(
+                episodes,
+                combined_loss,
+                alpha=0.3,
+                color="#ff7f0e",
+                linewidth=1,
+                label="Raw Combined Loss",
+            )
             ax.plot(
                 episodes,
                 smoothed,
@@ -185,15 +193,41 @@ def plot_loss_unified(df, output_dir, algorithm="DQN", window=20):
         elif has_actor:
             actor_loss = df["actor_loss"].values
             smoothed = smooth(actor_loss, window=window)
-            ax.plot(episodes, actor_loss, alpha=0.3, color="#ff7f0e", linewidth=1, label="Raw Actor Loss")
-            ax.plot(episodes, smoothed, color="#2ca02c", linewidth=2.5, label=f"Smoothed (window={window})")
+            ax.plot(
+                episodes,
+                actor_loss,
+                alpha=0.3,
+                color="#ff7f0e",
+                linewidth=1,
+                label="Raw Actor Loss",
+            )
+            ax.plot(
+                episodes,
+                smoothed,
+                color="#2ca02c",
+                linewidth=2.5,
+                label=f"Smoothed (window={window})",
+            )
             title = "Actor Loss"
 
         else:
             critic_loss = df["critic_loss"].values
             smoothed = smooth(critic_loss, window=window)
-            ax.plot(episodes, critic_loss, alpha=0.3, color="#ff7f0e", linewidth=1, label="Raw Critic Loss")
-            ax.plot(episodes, smoothed, color="#2ca02c", linewidth=2.5, label=f"Smoothed (window={window})")
+            ax.plot(
+                episodes,
+                critic_loss,
+                alpha=0.3,
+                color="#ff7f0e",
+                linewidth=1,
+                label="Raw Critic Loss",
+            )
+            ax.plot(
+                episodes,
+                smoothed,
+                color="#2ca02c",
+                linewidth=2.5,
+                label=f"Smoothed (window={window})",
+            )
             title = "Critic Loss"
 
     ax.set_xlabel("Episode", fontweight="bold")
@@ -222,7 +256,7 @@ def plot_exploration_rate(df, output_dir, algorithm="DQN", window=20):
 
     if algorithm.upper() == "DQN":
         if "epsilon" not in df.columns:
-            print(f"⚠ Colonna 'epsilon' non trovata nel log DQN")
+            print("⚠ Colonna 'epsilon' non trovata nel log DQN")
             return
 
         epsilon = df["epsilon"].values
@@ -237,8 +271,21 @@ def plot_exploration_rate(df, output_dir, algorithm="DQN", window=20):
         if "entropy" in df.columns:
             entropy = df["entropy"].values
             smoothed = smooth(entropy, window=window)
-            ax.plot(episodes, entropy, alpha=0.3, color="#9467bd", linewidth=1, label="Raw Entropy")
-            ax.plot(episodes, smoothed, color="#d62728", linewidth=2.5, label=f"Smoothed (window={window})")
+            ax.plot(
+                episodes,
+                entropy,
+                alpha=0.3,
+                color="#9467bd",
+                linewidth=1,
+                label="Raw Entropy",
+            )
+            ax.plot(
+                episodes,
+                smoothed,
+                color="#d62728",
+                linewidth=2.5,
+                label=f"Smoothed (window={window})",
+            )
             ax.set_ylabel("Entropy", fontweight="bold")
             title = "Policy Entropy (Exploration Measure)"
 
@@ -250,10 +297,17 @@ def plot_exploration_rate(df, output_dir, algorithm="DQN", window=20):
             title = "Learning Rate Decay"
 
         else:
-            print(f"⚠ Colonne 'entropy' o 'learning_rate' non trovate nel log PPO")
+            print("⚠ Colonne 'entropy' o 'learning_rate' non trovate nel log PPO")
             # Creiamo un grafico placeholder vuoto per mantenere la struttura
-            ax.text(0.5, 0.5, 'No Exploration Data Available',
-                   ha='center', va='center', transform=ax.transAxes, fontsize=14)
+            ax.text(
+                0.5,
+                0.5,
+                "No Exploration Data Available",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+                fontsize=14,
+            )
             title = "Exploration Metric (Not Available)"
 
     ax.set_xlabel("Episode", fontweight="bold")
@@ -362,7 +416,9 @@ def plot_unified_dashboard(df, output_dir, algorithm="DQN", window=20):
     rewards = df["total_reward"].values
     smoothed_rewards = smooth(rewards, window=window)
     ax.plot(episodes, rewards, alpha=0.3, color="#1f77b4", linewidth=1, label="Raw")
-    ax.plot(episodes, smoothed_rewards, color="#d62728", linewidth=2.5, label="Smoothed")
+    ax.plot(
+        episodes, smoothed_rewards, color="#d62728", linewidth=2.5, label="Smoothed"
+    )
     ax.axhline(y=0, color="black", linestyle="--", linewidth=0.8, alpha=0.5)
     ax.set_xlabel("Episode", fontweight="bold")
     ax.set_ylabel("Cumulative Reward", fontweight="bold")
@@ -376,15 +432,24 @@ def plot_unified_dashboard(df, output_dir, algorithm="DQN", window=20):
         steps = df["steps"].values
         smoothed_steps = smooth(steps, window=window)
         ax.plot(episodes, steps, alpha=0.3, color="#8c564b", linewidth=1, label="Raw")
-        ax.plot(episodes, smoothed_steps, color="#e377c2", linewidth=2.5, label="Smoothed")
+        ax.plot(
+            episodes, smoothed_steps, color="#e377c2", linewidth=2.5, label="Smoothed"
+        )
         ax.set_xlabel("Episode", fontweight="bold")
         ax.set_ylabel("Steps", fontweight="bold")
         ax.set_title("Episode Length", fontweight="bold")
         ax.legend(loc="best", framealpha=0.95)
         ax.grid(True, alpha=0.3)
     else:
-        ax.text(0.5, 0.5, 'No Episode Length Data',
-               ha='center', va='center', transform=ax.transAxes, fontsize=14)
+        ax.text(
+            0.5,
+            0.5,
+            "No Episode Length Data",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+            fontsize=14,
+        )
 
     # ===== 3. Training Loss (bottom-left) =====
     ax = axes[1, 0]
@@ -393,7 +458,9 @@ def plot_unified_dashboard(df, output_dir, algorithm="DQN", window=20):
         losses = df["avg_loss"].values
         smoothed_losses = smooth(losses, window=window)
         ax.plot(episodes, losses, alpha=0.3, color="#ff7f0e", linewidth=1, label="Raw")
-        ax.plot(episodes, smoothed_losses, color="#2ca02c", linewidth=2.5, label="Smoothed")
+        ax.plot(
+            episodes, smoothed_losses, color="#2ca02c", linewidth=2.5, label="Smoothed"
+        )
         ax.set_xlabel("Episode", fontweight="bold")
         ax.set_ylabel("Average Loss", fontweight="bold")
         ax.set_title("Training Loss", fontweight="bold")
@@ -409,16 +476,31 @@ def plot_unified_dashboard(df, output_dir, algorithm="DQN", window=20):
             critic_loss = df["critic_loss"].values
             combined = (actor_loss + critic_loss) / 2
             smoothed_loss = smooth(combined, window=window)
-            ax.plot(episodes, combined, alpha=0.3, color="#ff7f0e", linewidth=1, label="Raw")
-            ax.plot(episodes, smoothed_loss, color="#2ca02c", linewidth=2.5, label="Smoothed")
+            ax.plot(
+                episodes, combined, alpha=0.3, color="#ff7f0e", linewidth=1, label="Raw"
+            )
+            ax.plot(
+                episodes,
+                smoothed_loss,
+                color="#2ca02c",
+                linewidth=2.5,
+                label="Smoothed",
+            )
             ax.set_xlabel("Episode", fontweight="bold")
             ax.set_ylabel("Combined Loss", fontweight="bold")
             ax.set_title("Training Loss (Actor+Critic Avg)", fontweight="bold")
             ax.legend(loc="best", framealpha=0.95)
             ax.grid(True, alpha=0.3)
         else:
-            ax.text(0.5, 0.5, 'Loss Data Not Available',
-                   ha='center', va='center', transform=ax.transAxes, fontsize=14)
+            ax.text(
+                0.5,
+                0.5,
+                "Loss Data Not Available",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+                fontsize=14,
+            )
 
     # ===== 4. Exploration Rate o Mantis Killed (bottom-right) =====
     ax = axes[1, 1]
@@ -435,10 +517,19 @@ def plot_unified_dashboard(df, output_dir, algorithm="DQN", window=20):
             linewidth=1,
             marker="o",
             markersize=2,
-            label="Raw"
+            label="Raw",
         )
-        ax.plot(episodes, smoothed_mantis, color="#d62728", linewidth=2.5, label="Smoothed")
-        ax.axhline(y=3, color="red", linestyle="--", linewidth=1, alpha=0.6, label="Victory (3)")
+        ax.plot(
+            episodes, smoothed_mantis, color="#d62728", linewidth=2.5, label="Smoothed"
+        )
+        ax.axhline(
+            y=3,
+            color="red",
+            linestyle="--",
+            linewidth=1,
+            alpha=0.6,
+            label="Victory (3)",
+        )
         ax.set_xlabel("Episode", fontweight="bold")
         ax.set_ylabel("Mantis Lords Killed", fontweight="bold")
         ax.set_title("Mantis Lords Defeated", fontweight="bold")
@@ -461,7 +552,9 @@ def plot_unified_dashboard(df, output_dir, algorithm="DQN", window=20):
         entropy = df["entropy"].values
         smoothed_ent = smooth(entropy, window=window)
         ax.plot(episodes, entropy, alpha=0.3, color="#9467bd", linewidth=1, label="Raw")
-        ax.plot(episodes, smoothed_ent, color="#d62728", linewidth=2.5, label="Smoothed")
+        ax.plot(
+            episodes, smoothed_ent, color="#d62728", linewidth=2.5, label="Smoothed"
+        )
         ax.set_xlabel("Episode", fontweight="bold")
         ax.set_ylabel("Entropy", fontweight="bold")
         ax.set_title("Policy Entropy (Exploration)", fontweight="bold")
@@ -469,8 +562,15 @@ def plot_unified_dashboard(df, output_dir, algorithm="DQN", window=20):
         ax.grid(True, alpha=0.3)
 
     else:
-        ax.text(0.5, 0.5, 'No Additional Metric Available',
-               ha='center', va='center', transform=ax.transAxes, fontsize=14)
+        ax.text(
+            0.5,
+            0.5,
+            "No Additional Metric Available",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+            fontsize=14,
+        )
 
     plt.tight_layout()
     output_path = os.path.join(output_dir, f"{algorithm.lower()}_dashboard.png")
@@ -531,7 +631,9 @@ def main():
     plot_episode_length(df, args.output, algorithm=algorithm, window=args.window)
     plot_loss_unified(df, args.output, algorithm=algorithm, window=args.window)
     plot_exploration_rate(df, args.output, algorithm=algorithm, window=args.window)
-    plot_mantis_lords_killed_unified(df, args.output, algorithm=algorithm, window=args.window)
+    plot_mantis_lords_killed_unified(
+        df, args.output, algorithm=algorithm, window=args.window
+    )
 
     print("\nGenerazione dashboard unificata...")
     plot_unified_dashboard(df, args.output, algorithm=algorithm, window=args.window)
