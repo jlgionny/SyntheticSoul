@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logo_grande.jpg" alt="SyntheticSoul Logo" width="300"/>
+<img src="assets/logo_grande.png" alt="SyntheticSoul Logo" width="300"/>
 
 # SyntheticSoul: Hollow Knight RL Challenge
 
