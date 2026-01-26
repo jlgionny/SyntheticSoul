@@ -101,7 +101,6 @@ class RewardCalculator:
             self.prev_mantis_killed = 0
         self.episode_start_time = time.time()
 
-
     def calculate_reward(self, state_dict, prev_state, done, info=None):
         reward = 0.0
 
@@ -393,7 +392,6 @@ def train_ppo(
         print(f"  Steps in Episode: {step + 1}")
         print(f"  Global Steps: {global_step}")
         print(f"  Mantis Lords Killed: {mantis_killed}/3")
-
 
         with open(log_file, "a") as f:
             f.write(
