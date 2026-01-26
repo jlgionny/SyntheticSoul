@@ -380,11 +380,6 @@ def train_ppo(
                 break
 
         episode_rewards.append(episode_reward)
-        avg_reward_last_10 = (
-            np.mean(episode_rewards[-10:])
-            if len(episode_rewards) >= 10
-            else episode_reward
-        )
         # Usa il valore tracciato dalla RewardCalculator invece di state_dict
         mantis_killed = reward_calc.prev_mantis_killed
         print(f"\n[Episode {episode + 1}] Summary:")
