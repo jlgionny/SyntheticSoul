@@ -19,11 +19,9 @@ jobs:
         if [ -f AI_Agents/src/requirements/requirements.txt ]; then pip install -r AI_Agents/src/requirements/requirements.txt; fi
 
     - name: 1. Check Formatting (Black)
-      # Se fallisce qui, il dev deve lanciare "black ." sul suo PC
       run: |
-        black --check AI_Agents/src/requirements/requirements.txt
+        black --check AI_Agents/scripts/ AI_Agents/src/
 
     - name: 2. Check Logic & Style (Flake8)
-      # Ignoriamo E501 (lunghezza riga) perché se ne occupa già Black
       run: |
-        flake8 AI_Agents/src/requirements/requirements.txt --ignore=E501,W503 --count --show-source --statistics
+        flake8 AI_Agents/scripts/ AI_Agents/src/ --ignore=E501,W503 --count --show-source --statistics
