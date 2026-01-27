@@ -1,7 +1,6 @@
 import os
 import sys
 import subprocess
-import time
 import math
 import numpy as np
 from datetime import datetime
@@ -202,7 +201,7 @@ def train_dqn(
     # --- GPU CHECK ---
     print(f"\n{'='*40}")
     print(f"🔥 DISPOSITIVO RILEVATO: {agent.device} 🔥")
-    if str(agent.device) == 'cuda':
+    if str(agent.device) == "cuda":
         print(f"   Scheda Video: {torch.cuda.get_device_name(0)}")
     else:
         print("   ⚠️ ATTENZIONE: Stai usando la CPU!")
@@ -244,7 +243,6 @@ def train_dqn(
         total_damage_taken = 0
 
         # Recupero kills iniziali per tracciare progresso episodio
-        initial_mantis_killed = state_dict.get("mantisLordsKilled", 0)
 
         print(f"\n[Episode {episode + 1}/{num_episodes}] Starting...")
 
@@ -262,7 +260,9 @@ def train_dqn(
 
             episode_reward += reward
             # Info extra per log
-            damage_this_step = info.get("damage_taken", 0) if "damage_taken" in info else 0
+            damage_this_step = (
+                info.get("damage_taken", 0) if "damage_taken" in info else 0
+            )
             total_damage_taken += damage_this_step
 
             agent.store_transition(state, action, reward, next_state, done)
@@ -291,7 +291,9 @@ def train_dqn(
                     "Player died"
                     if next_state_dict.get("isDead")
                     else (
-                        "Boss defeated" if next_state_dict.get("bossDefeated") else "Unknown"
+                        "Boss defeated"
+                        if next_state_dict.get("bossDefeated")
+                        else "Unknown"
                     )
                 )
                 print(f"  [Episode End] Reason: {reason}")
