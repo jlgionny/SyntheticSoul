@@ -1,6 +1,7 @@
 import os
 import sys
 import subprocess
+import time
 import math
 import numpy as np
 from datetime import datetime
@@ -76,80 +77,38 @@ def auto_generate_plots(
         print(f"[Auto Plot] ✗ Errore: {e}")
 
 
-def preprocess_state(state_dict):
-    """Optimized state preprocessing - 28 features"""
+def preprocess_state(state_dict: dict) -> np.ndarray:
+    """
+    MINIMAL STATE (10 features) - NO raycast (broken).
+    ONLY boss position + player status.
+    """
     features = []
 
-    # PLAYER FEATURES (10)
-    player_x = state_dict.get("playerX", 0.0)
-    player_y = state_dict.get("playerY", 0.0)
-    features.append(player_x / 40.0)
-    features.append(player_y / 30.0)
-    features.append(np.clip(state_dict.get("playerVelocityX", 0.0) / 10.0, -1.0, 1.0))
-    features.append(np.clip(state_dict.get("playerVelocityY", 0.0) / 10.0, -1.0, 1.0))
+    # Player basics (4)
     features.append(state_dict.get("playerHealth", 0) / 10.0)
-    features.append(state_dict.get("playerSoul", 0) / 100.0)
     features.append(float(state_dict.get("canDash", False)))
     features.append(float(state_dict.get("canAttack", False)))
     features.append(float(state_dict.get("isGrounded", False)))
-    features.append(float(state_dict.get("hasDoubleJump", False)))
 
-    # TERRAIN INFO (5)
-    terrain_info = state_dict.get("terrainInfo", [1.0, 1.0, 1.0, 1.0, 1.0])
-    if len(terrain_info) < 5:
-        terrain_info = list(terrain_info) + [1.0] * (5 - len(terrain_info))
-    features.extend(terrain_info[:5])
+    # Boss (4) - LA SOLA COSA CHE FUNZIONA
+    boss_rel_x = state_dict.get("bossRelativeX", 0.0)
+    boss_rel_y = state_dict.get("bossRelativeY", 0.0)
+    distance = state_dict.get("distanceToBoss", 50.0) / 50.0
+    facing_boss = float(state_dict.get("isFacingBoss", False))
 
-    # BOSS FEATURES (7)
-    boss_x = state_dict.get("bossX", 0.0)
-    boss_y = state_dict.get("bossY", 0.0)
-    boss_relative_x = (boss_x - player_x) / 40.0
-    boss_relative_y = (boss_y - player_y) / 30.0
-    features.append(boss_relative_x)
-    features.append(boss_relative_y)
-    features.append(state_dict.get("bossHealth", 0) / 1000.0)
-    distance_to_boss = state_dict.get("distanceToBoss", 50.0)
-    features.append(np.clip(distance_to_boss / 50.0, 0.0, 1.0))
-    angle_to_boss = math.atan2(boss_relative_y, boss_relative_x) / math.pi
-    features.append(angle_to_boss)
-    features.append(float(state_dict.get("isFacingBoss", False)))
-    boss_vel_x = state_dict.get("bossVelocityX", 0.0)
-    features.append(np.clip(boss_vel_x / 10.0, -1.0, 1.0))
+    features.append(boss_rel_x)
+    features.append(boss_rel_y)
+    features.append(np.clip(distance, 0.0, 1.0))
+    features.append(facing_boss)
 
-    state_dict["bossRelativeX"] = boss_relative_x
-    state_dict["bossRelativeY"] = boss_relative_y
-
-    # HAZARDS (6 features - top 2)
+    # Hazard più vicino (2) - posizione
     hazards = state_dict.get("nearbyHazards", [])
-    if hazards:
-        hazards_with_dist = []
-        for h in hazards:
-            rel_x = h.get("relX", 0.0)
-            rel_y = h.get("relY", 0.0)
-            dist = math.sqrt(rel_x**2 + rel_y**2)
-            hazards_with_dist.append((dist, h))
-        hazards_with_dist.sort(key=lambda x: x[0])
-        sorted_hazards = [h for _, h in hazards_with_dist[:2]]
+    if len(hazards) > 0:
+        h = hazards[0]
+        features.append(np.clip(h.get("relX", 0.0) / 15.0, -1.0, 1.0))
+        features.append(np.clip(h.get("relY", 0.0) / 15.0, -1.0, 1.0))
     else:
-        sorted_hazards = []
-
-    for i in range(2):
-        if i < len(sorted_hazards):
-            h = sorted_hazards[i]
-            rel_x = h.get("relX", 0.0) / 30.0
-            rel_y = h.get("relY", 0.0) / 30.0
-            features.append(np.clip(rel_x, -1.0, 1.0))
-            features.append(np.clip(rel_y, -1.0, 1.0))
-            hazard_vel_x = h.get("velocityX", 0.0)
-            hazard_vel_y = h.get("velocityY", 0.0)
-            player_vel_x = state_dict.get("playerVelocityX", 0.0)
-            player_vel_y = state_dict.get("playerVelocityY", 0.0)
-            rel_vel_magnitude = math.sqrt(
-                (hazard_vel_x - player_vel_x) ** 2 + (hazard_vel_y - player_vel_y) ** 2
-            )
-            features.append(np.clip(rel_vel_magnitude / 20.0, 0.0, 1.0))
-        else:
-            features.extend([0.0, 0.0, 0.0])
+        features.extend([0.0, 0.0])
 
     return np.array(features, dtype=np.float32)
 

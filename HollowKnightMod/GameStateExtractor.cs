@@ -175,33 +175,62 @@ namespace SyntheticSoulMod
         {
             float[] terrainInfo = new float[5];
             Vector2 playerPos = HeroController.instance.transform.position;
-            LayerMask terrainMask = LayerMask.GetMask("Terrain");
 
-            // Ground check (index 0)
-            RaycastHit2D groundHit = Physics2D.Raycast(playerPos, Vector2.down, 2f, terrainMask);
-            terrainInfo[0] = groundHit.collider != null ? (groundHit.distance / 2f) : 1.0f;
+            // FIX 1: Offset raycast origin di 0.5 unità sopra il player
+            Vector2 rayOrigin = new Vector2(playerPos.x, playerPos.y + 0.5f);
 
-            // Ceiling check (index 1)
-            RaycastHit2D ceilingHit = Physics2D.Raycast(playerPos, Vector2.up, 2f, terrainMask);
-            terrainInfo[1] = ceilingHit.collider != null ? (ceilingHit.distance / 2f) : 1.0f;
+            // FIX 2: Usa TUTTI i layer per debug
+            LayerMask terrainMask = ~0; // Tutti i layer
 
-            // Wall ahead check (index 2)
+            DesktopLogger.Log($"[Raycast] Origin: {rayOrigin}");
+
+            // Ground check - start from ABOVE player
+            RaycastHit2D groundHit = Physics2D.Raycast(rayOrigin, Vector2.down, 3f, terrainMask);
+            if (groundHit.collider != null && groundHit.distance > 0.1f)
+            {
+                terrainInfo[0] = Mathf.Clamp01(groundHit.distance / 2f);
+                DesktopLogger.Log($"[Ground] Hit: {groundHit.collider.name}, Dist: {groundHit.distance:F2}");
+            }
+            else
+            {
+                terrainInfo[0] = 1.0f;
+                DesktopLogger.Log("[Ground] No valid hit");
+            }
+
+            // Ceiling
+            RaycastHit2D ceilingHit = Physics2D.Raycast(rayOrigin, Vector2.up, 3f, terrainMask);
+            terrainInfo[1] = (ceilingHit.collider != null && ceilingHit.distance > 0.1f)
+                ? Mathf.Clamp01(ceilingHit.distance / 2f) : 1.0f;
+
+            // Wall ahead
             Vector2 facingDir = HeroController.instance.cState.facingRight ? Vector2.right : Vector2.left;
-            RaycastHit2D wallHit = Physics2D.Raycast(playerPos, facingDir, 3f, terrainMask);
-            terrainInfo[2] = wallHit.collider != null ? (wallHit.distance / 3f) : 1.0f;
+            RaycastHit2D wallHit = Physics2D.Raycast(rayOrigin, facingDir, 5f, terrainMask);
+            if (wallHit.collider != null && wallHit.distance > 0.1f)
+            {
+                terrainInfo[2] = Mathf.Clamp01(wallHit.distance / 3f);
+                DesktopLogger.Log($"[Wall] Hit: {wallHit.collider.name}, Dist: {wallHit.distance:F2}");
+            }
+            else
+            {
+                terrainInfo[2] = 1.0f;
+                DesktopLogger.Log("[Wall] No valid hit");
+            }
 
-            // Wall behind check (index 3)
+            // Wall behind
             Vector2 behindDir = HeroController.instance.cState.facingRight ? Vector2.left : Vector2.right;
-            RaycastHit2D wallBehindHit = Physics2D.Raycast(playerPos, behindDir, 3f, terrainMask);
-            terrainInfo[3] = wallBehindHit.collider != null ? (wallBehindHit.distance / 3f) : 1.0f;
+            RaycastHit2D wallBehindHit = Physics2D.Raycast(rayOrigin, behindDir, 5f, terrainMask);
+            terrainInfo[3] = (wallBehindHit.collider != null && wallBehindHit.distance > 0.1f)
+                ? Mathf.Clamp01(wallBehindHit.distance / 3f) : 1.0f;
 
-            // Platform check diagonal (index 4)
+            // Platform
             Vector2 diagDir = new Vector2(facingDir.x, -0.5f).normalized;
-            RaycastHit2D diagHit = Physics2D.Raycast(playerPos, diagDir, 3f, terrainMask);
-            terrainInfo[4] = diagHit.collider != null ? (diagHit.distance / 3f) : 1.0f;
+            RaycastHit2D diagHit = Physics2D.Raycast(rayOrigin, diagDir, 5f, terrainMask);
+            terrainInfo[4] = (diagHit.collider != null && diagHit.distance > 0.1f)
+                ? Mathf.Clamp01(diagHit.distance / 3f) : 1.0f;
 
             return terrainInfo;
         }
+
 
         /// <summary>
         /// Esegue un raycast e restituisce la distanza all'ostacolo.
@@ -305,50 +334,59 @@ namespace SyntheticSoulMod
         /// </summary>
         private GameObject FindBoss()
         {
-            string[] bossNames = new string[]
+            DesktopLogger.Log("[FindBoss] Starting boss search...");
+
+            // Lista nomi Mantis Lords
+            string[] mantisNames = new string[]
             {
-                "Hornet Boss", "Hornet", "Mantis Lord", "False Knight",
-                "Mawlek Body", "Mega Zombie Beam Miner (1)", "Zombie Beam Miner Rematch",
-                "Mage Knight", "Dream Mage", "Ghost Warrior Hu", "Ghost Warrior Galien",
-                "Ghost Warrior Marmu", "Ghost Warrior Xero", "Ghost Warrior Markoth",
-                "Ghost Warrior No Eyes", "Ghost Warrior Gorb", "Jar Collector",
-                "Dung Defender", "White Defender", "Lost Kin", "Infected Knight",
-                "Mantis Traitor Lord", "Hive Knight"
+                "Mantis Lord",
+                "Mantis Lord S1",
+                "Mantis Lord S2"
             };
 
-            foreach (string name in bossNames)
+            foreach (string name in mantisNames)
             {
                 GameObject boss = GameObject.Find(name);
-                if (boss != null && boss.activeInHierarchy)
+                if (boss != null)
                 {
+                    DesktopLogger.Log($"[FindBoss] Found {name} at {boss.transform.position}");
                     var hm = boss.GetComponent<HealthManager>();
+                    if (hm != null)
+                    {
+                        DesktopLogger.Log($"[FindBoss] {name} HP: {hm.hp}");
+                        if (hm.hp > 0)
+                        {
+                            return boss;
+                        }
+                    }
+                }
+                else
+                {
+                    DesktopLogger.Log($"[FindBoss] {name} NOT FOUND");
+                }
+            }
+
+            // Fallback: cerca TUTTI i GameObject nella scena
+            DesktopLogger.Log("[FindBoss] Fallback: searching all GameObjects...");
+            var allObjects = GameObject.FindObjectsOfType<GameObject>();
+            DesktopLogger.Log($"[FindBoss] Total objects in scene: {allObjects.Length}");
+
+            // Cerca oggetti con "Mantis" o "Lord" nel nome
+            foreach (var obj in allObjects)
+            {
+                if (obj.name.Contains("Mantis") || obj.name.Contains("Lord"))
+                {
+                    DesktopLogger.Log($"[FindBoss] Found potential boss: {obj.name} at {obj.transform.position}");
+                    var hm = obj.GetComponent<HealthManager>();
                     if (hm != null && hm.hp > 0)
                     {
-                        return boss;
+                        DesktopLogger.Log($"[FindBoss] Using {obj.name} as boss (HP: {hm.hp})");
+                        return obj;
                     }
                 }
             }
 
-            // Fallback: cerca qualsiasi HealthManager con hp > 50
-            var healthManagers = GameObject.FindObjectsOfType<HealthManager>();
-            foreach (var hm in healthManagers)
-            {
-                if (hm.hp > 50 && hm.gameObject.activeInHierarchy)
-                {
-                    string name = hm.gameObject.name.ToLower();
-                    // Escludi il giocatore
-                    if (name.Contains("knight") || name.Contains("hollow"))
-                        continue;
-
-                    if (name.Contains("boss") || name.Contains("hornet") || name.Contains("mantis") ||
-                        name.Contains("mage") || name.Contains("ghost") || name.Contains("defender") ||
-                        name.Contains("traitor"))
-                    {
-                        return hm.gameObject;
-                    }
-                }
-            }
-
+            DesktopLogger.LogError("[FindBoss] NO BOSS FOUND IN SCENE!");
             return null;
         }
 
