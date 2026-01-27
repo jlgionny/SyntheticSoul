@@ -12,24 +12,13 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 from src.agents.dqn_agent import DQNAgent
 from src.env.hollow_knight_env import HollowKnightEnv
 
+
 # ============ AUTO PLOT GENERATOR IMPORT ============
-
-
 def auto_generate_plots(
     log_file, checkpoint_dir, algorithm="DQN", window=20, current_episode=0
 ):
-    """
-    Genera automaticamente grafici dal log di training in sottocartelle organizzate.
-
-    Struttura:
-    plots_dqn/
-    ├── episode_100/
-    ├── episode_200/
-    ├── ...
-    └── episode_1000_final/
-    """
-    # Crea sottocartella per l'episodio corrente
-    if current_episode == 1000:  # O num_episodes finale
+    """Genera automaticamente grafici in sottocartelle organizzate."""
+    if current_episode == 1000:
         episode_folder = f"episode_{current_episode}_final"
     else:
         episode_folder = f"episode_{current_episode}"
@@ -42,7 +31,6 @@ def auto_generate_plots(
         return
 
     script_path = os.path.join(os.path.dirname(__file__), "generate_plots.py")
-
     if not os.path.exists(script_path):
         print("[Auto Plot] Warning: Script generate_plots.py non trovato")
         return
@@ -54,10 +42,10 @@ def auto_generate_plots(
             [
                 sys.executable,
                 script_path,
-                "--log",
-                log_file,
-                "--type",
+                "--mode",
                 algorithm.lower(),
+                f"--{algorithm.lower()}-log",
+                log_file,
                 "--output",
                 plots_dir,
                 "--window",
@@ -70,8 +58,6 @@ def auto_generate_plots(
 
         if result.returncode == 0:
             print(f"[Auto Plot] ✓ Grafici generati in: {plots_dir}")
-
-            # Crea anche un file info.txt nella cartella
             info_path = os.path.join(plots_dir, "info.txt")
             with open(info_path, "w") as f:
                 f.write("Training Snapshot\n")
@@ -80,12 +66,10 @@ def auto_generate_plots(
                 f.write(f"Episode: {current_episode}\n")
                 f.write(f"Smoothing Window: {window}\n")
                 f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-
         else:
             print("[Auto Plot] ✗ Errore durante generazione:")
             if result.stderr:
                 print(result.stderr[:500])
-
     except subprocess.TimeoutExpired:
         print("[Auto Plot] ✗ Timeout durante generazione grafici")
     except Exception as e:
@@ -93,21 +77,21 @@ def auto_generate_plots(
 
 
 class RewardCalculator:
-    """
-    Simplified Reward Function - Combat-Focused
-    """
+    """Simplified Reward Function - Combat-Focused con Mantis Lords tracking"""
 
     def __init__(self):
         self.prev_boss_health = None
         self.episode_start_time = None
         self.steps_in_combat_range = 0
         self.current_step = 0
+        self.prev_mantis_killed = 0
 
     def reset(self):
         self.prev_boss_health = None
         self.episode_start_time = time.time()
         self.steps_in_combat_range = 0
         self.current_step = 0
+        self.prev_mantis_killed = 0
 
     def calculate_reward(self, state_dict, prev_state, done, info=None):
         reward = 0.0
@@ -165,6 +149,17 @@ class RewardCalculator:
             wall_distance = terrain_info[2]
             if wall_distance > 0.4:
                 reward += 0.05
+
+        # MANTIS LORDS KILL REWARD
+        mantis_killed = state_dict.get("mantisLordsKilled", 0)
+        if mantis_killed > self.prev_mantis_killed:
+            new_kills = mantis_killed - self.prev_mantis_killed
+            mantis_bonus = new_kills * 150.0
+            reward += mantis_bonus
+            print(
+                f"  [MANTIS LORD KILLED] +{new_kills} defeated: +{mantis_bonus:.2f} (Total: {mantis_killed}/3)"
+            )
+        self.prev_mantis_killed = mantis_killed
 
         # TERMINAL STATE REWARDS
         if done:
@@ -274,21 +269,20 @@ def train_dqn(
     epsilon_decay=10000,
     target_update_freq=1000,
     save_freq=50,
-    checkpoint_dir="checkpoints_dqn",
+    checkpoint_dir="checkpoints_dqn_mantis",
     host="localhost",
     port=5555,
     plot_freq=100,
 ):
     """Main training loop with organized auto-plot generation."""
-
     # Salva i checkpoint nella cartella AI_Agents
     ai_agents_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     checkpoint_dir_full = os.path.join(ai_agents_root, checkpoint_dir)
-
     os.makedirs(checkpoint_dir_full, exist_ok=True)
 
     print(f"[Train] Connecting to Hollow Knight at {host}:{port}...")
     env = HollowKnightEnv(host=host, port=port)
+
     initial_state = env.reset()
     state_array = preprocess_state(initial_state)
     state_size = len(state_array)
@@ -316,18 +310,22 @@ def train_dqn(
 
     reward_calc = RewardCalculator()
     episode_rewards = []
-    episode_losses = []
     best_reward = -float("inf")
 
     log_file = os.path.join(checkpoint_dir_full, "training_log.txt")
 
+    # FIX: Header aggiornato come PPO
     if not os.path.exists(log_file):
         with open(log_file, "w") as f:
-            f.write("episode,total_reward,avg_loss,steps,epsilon,damage_taken\n")
+            f.write(
+                "episode,total_reward,steps,global_step,mantis_killed,avg_loss,epsilon\n"
+            )
 
     print(f"\n{'='*60}")
-    print(f"Starting Training - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Starting DQN Training - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}\n")
+
+    global_step = 0
 
     for episode in range(num_episodes):
         state_dict = env.reset()
@@ -342,14 +340,18 @@ def train_dqn(
         print(f"\n[Episode {episode + 1}/{num_episodes}] Starting...")
 
         for step in range(max_steps_per_episode):
+            global_step += 1
+
             epsilon = agent.get_epsilon(epsilon_start, epsilon_end, epsilon_decay)
             action = agent.select_action(state, epsilon=epsilon)
+
             next_state_dict, done, info = env.step(action)
             next_state = preprocess_state(next_state_dict)
 
             reward = reward_calc.calculate_reward(
                 next_state_dict, prev_state_dict, done, info
             )
+
             episode_reward += reward
             damage_this_step = next_state_dict.get("damageTaken", 0)
             total_damage_taken += damage_this_step
@@ -389,8 +391,10 @@ def train_dqn(
 
         agent.episodes_done += 1
         episode_rewards.append(episode_reward)
+
         avg_loss = np.mean(episode_loss) if episode_loss else 0.0
-        episode_losses.append(avg_loss)
+        mantis_killed = reward_calc.prev_mantis_killed
+
         avg_reward_last_10 = (
             np.mean(episode_rewards[-10:])
             if len(episode_rewards) >= 10
@@ -401,14 +405,17 @@ def train_dqn(
         print(f"  Total Reward: {episode_reward:.2f}")
         print(f"  Avg Loss: {avg_loss:.4f}")
         print(f"  Steps: {step + 1}")
+        print(f"  Global Steps: {global_step}")
         print(f"  Epsilon: {epsilon:.4f}")
+        print(f"  Mantis Lords Killed: {mantis_killed}/3")
         print(f"  Avg Reward (last 10): {avg_reward_last_10:.2f}")
         print(f"  Combat Range Steps: {reward_calc.steps_in_combat_range}")
         print(f"  Total Damage Taken: {total_damage_taken}")
 
+        # FIX: Salva metriche come PPO
         with open(log_file, "a") as f:
             f.write(
-                f"{episode + 1},{episode_reward:.2f},{avg_loss:.4f},{step + 1},{epsilon:.4f},{total_damage_taken}\n"
+                f"{episode + 1},{episode_reward:.2f},{step + 1},{global_step},{mantis_killed},{avg_loss:.4f},{epsilon:.4f}\n"
             )
 
         if episode_reward > best_reward:
@@ -434,13 +441,13 @@ def train_dqn(
                 log_file=log_file,
                 checkpoint_dir=checkpoint_dir_full,
                 algorithm="DQN",
-                window=min(20, max(10, (episode + 1) // 50)),  # Smoothing adattivo
+                window=min(20, max(10, (episode + 1) // 50)),
                 current_episode=episode + 1,
             )
             print(f"{'='*60}\n")
 
     print(f"\n{'='*60}")
-    print("Training Completed!")
+    print("DQN Training Completed!")
     print(f"{'='*60}")
     print(f"Best Reward: {best_reward:.2f}")
 
@@ -468,25 +475,24 @@ if __name__ == "__main__":
     }
 
     print("=" * 60)
-    print("HOLLOW KNIGHT DQN TRAINING - ORGANIZED PLOTS")
+    print("DQN Training - Mantis Lords - ORGANIZED PLOTS")
     print("=" * 60)
     print("\nKey Features:")
-    print("  ✓ Simplified combat-focused reward")
     print("  ✓ Auto-generated plots every 100 episodes")
     print("  ✓ Organized in subfolders (episode_100, episode_200, ...)")
     print("  ✓ Final plots at episode 1000")
-    print("  ✓ Adaptive smoothing")
+    print("  ✓ Mantis Lords progress tracking")
+    print("  ✓ Simplified combat-focused reward")
     print("\nStructure:")
     print("  plots_dqn/")
-    print("  ├── episode_100/")
-    print("  ├── episode_200/")
-    print("  ├── ...")
-    print("  └── episode_1000_final/")
+    print("    ├── episode_100/")
+    print("    ├── episode_200/")
+    print("    ├── ...")
+    print("    └── episode_1000_final/")
     print("\nHyperparameters:")
     for key, value in HYPERPARAMS.items():
         print(f"  {key}: {value}")
     print("=" * 60)
-    print()
 
     try:
         train_dqn(**HYPERPARAMS)

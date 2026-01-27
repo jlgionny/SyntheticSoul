@@ -2,7 +2,6 @@ import torch
 import torch.optim as optim
 import numpy as np
 import os
-
 from src.models.actor_critic import ActorCritic
 
 
@@ -17,11 +16,10 @@ class PPOMemory:
 
     def generate_batches(self):
         n_states = len(self.states)
-        batch_start = np.arange(0, n_states, 64)
+        batch_start = np.arange(0, n_states, 32)  # Batch size 32
         indices = np.arange(n_states, dtype=np.int64)
         np.random.shuffle(indices)
-        batches = [indices[i : i + 64] for i in batch_start]
-
+        batches = [indices[i : i + 32] for i in batch_start]
         return (
             np.array(self.states),
             np.array(self.actions),
@@ -54,11 +52,11 @@ class PPOAgent:
         self,
         state_size,
         action_size,
-        learning_rate=2e-4,
-        gamma=0.995,
-        gae_lambda=0.97,
-        policy_clip=0.15,
-        n_epochs=8,
+        learning_rate=5e-5,  # Ridotto da 2e-4
+        gamma=0.99,
+        gae_lambda=0.95,
+        policy_clip=0.2,  # Aumentato da 0.15
+        n_epochs=4,
         device=None,
     ):
         self.gamma = gamma
@@ -66,39 +64,29 @@ class PPOAgent:
         self.policy_clip = policy_clip
         self.n_epochs = n_epochs
 
-        # Setup device
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
             self.device = device
-
         print(f"[PPOAgent] Using device: {self.device}")
 
-        # Inizializza Actor-Critic Network con LSTM e hidden_size aumentato
         self.policy = ActorCritic(
             state_size,
             action_size,
-            hidden_size=384,  # Aumentato da 256
-            use_lstm=True,  # Abilita LSTM
+            hidden_size=256,  # Ridotto da 384 (meno capacity = più stabile)
+            use_lstm=True,
         ).to(self.device)
-
         self.optimizer = optim.Adam(self.policy.parameters(), lr=learning_rate)
 
-        # Buffer
         self.memory = PPOMemory()
-
         print(
             f"[PPOAgent] Initialized with state_size={state_size}, action_size={action_size}"
         )
-        print("[PPOAgent] Hidden size: 384, LSTM: Enabled")
+        print(f"[PPOAgent] Hidden size: 256, LSTM: Enabled, LR: {learning_rate}")
 
     def select_action(self, state):
-        """
-        Seleziona azione per interagire con l'environment.
-        """
         if isinstance(state, np.ndarray):
             state = torch.FloatTensor(state).to(self.device)
-
         if state.dim() == 1:
             state = state.unsqueeze(0)
 
@@ -108,14 +96,12 @@ class PPOAgent:
         return action.item(), log_prob.item(), value.item()
 
     def store_transition(self, state, action, log_prob, value, reward, done):
-        """Memorizza lo step nel buffer temporaneo"""
         self.memory.store_memory(state, action, log_prob, value, reward, done)
 
     def learn(self):
-        """
-        Cuore del PPO: Calcola advantages e aggiorna la rete per N epoche.
-        """
-        # Recupera i dati dal buffer
+        if len(self.memory.states) == 0:
+            return None
+
         (
             state_arr,
             action_arr,
@@ -128,84 +114,100 @@ class PPOAgent:
 
         values = vals_arr
 
-        # --- Calcolo GAE (Generalized Advantage Estimation) ---
+        # GAE calculation
         advantage = np.zeros(len(reward_arr), dtype=np.float32)
         last_advantage = 0
 
         for t in reversed(range(len(reward_arr))):
-            # Se è done, il valore futuro è 0
             mask = 1.0 - dones_arr[t]
             last_value = values[t + 1] if (t + 1) < len(reward_arr) else 0.0
             delta = reward_arr[t] + self.gamma * last_value * mask - values[t]
             advantage[t] = delta + self.gamma * self.gae_lambda * mask * last_advantage
             last_advantage = advantage[t]
 
-        # Converti in tensori
-        advantage = torch.tensor(advantage).to(self.device)
-        values = torch.tensor(values).to(self.device)
+        # Normalize advantages (STABILITÀ)
+        advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
 
-        # Reset LSTM hidden state prima di batch training
-        self.policy.reset_hidden()
+        advantage = torch.tensor(advantage, dtype=torch.float32).to(self.device)
+        values = torch.tensor(values, dtype=torch.float32).to(self.device)
+        old_probs_tensor = torch.tensor(old_prob_arr, dtype=torch.float32).to(
+            self.device
+        )
 
-        # Loop di ottimizzazione (Epochs)
+        total_actor_loss = 0.0
+        total_critic_loss = 0.0
+        total_entropy = 0.0
+        num_batches = 0
+
         for epoch in range(self.n_epochs):
-            for batch in batches:
+            for batch_idx, batch in enumerate(batches):
+                self.policy.reset_hidden()
+
                 states = torch.tensor(state_arr[batch], dtype=torch.float).to(
                     self.device
                 )
-                old_probs = torch.tensor(old_prob_arr[batch]).to(self.device)
+                old_probs = old_probs_tensor[batch]
                 actions = torch.tensor(action_arr[batch]).to(self.device)
 
-                # Valuta i nuovi log_probs e values per gli stati nel batch
                 new_probs, critic_value, dist_entropy = self.policy.evaluate(
                     states, actions
                 )
-
-                # Critic value shape fix
                 critic_value = critic_value.squeeze()
 
-                # Ratio per il PPO (pi_new / pi_old)
                 prob_ratio = torch.exp(new_probs - old_probs)
-
-                # Surrogate Loss
                 weighted_probs = advantage[batch] * prob_ratio
                 weighted_clipped_probs = (
                     torch.clamp(prob_ratio, 1 - self.policy_clip, 1 + self.policy_clip)
                     * advantage[batch]
                 )
 
-                # Loss Totale
                 actor_loss = -torch.min(weighted_probs, weighted_clipped_probs).mean()
-
-                # Critic Loss
                 returns = advantage[batch] + values[batch]
                 critic_loss = ((returns - critic_value) ** 2).mean()
-
-                # Entropy Loss
                 entropy_loss = -dist_entropy.mean()
 
-                # Combine losses
-                total_loss = actor_loss + 0.5 * critic_loss + 0.01 * entropy_loss
+                # CRITICAMENTE IMPORTANTE: entropy bonus più forte
+                total_loss = (
+                    actor_loss + 0.5 * critic_loss + 0.05 * entropy_loss
+                )  # 0.01 → 0.05
 
                 self.optimizer.zero_grad()
                 total_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 0.5)
+                # Gradient clipping più aggressivo
+                torch.nn.utils.clip_grad_norm_(
+                    self.policy.parameters(), 0.2
+                )  # 0.5 → 0.2
                 self.optimizer.step()
 
-        # Svuota la memoria dopo l'update!
+                total_actor_loss += actor_loss.item()
+                total_critic_loss += critic_loss.item()
+                total_entropy += dist_entropy.mean().item()
+                num_batches += 1
+
+            if (epoch + 1) % 2 == 0 or epoch == 0:
+                print(
+                    f"    [Epoch {epoch+1}/{self.n_epochs}] Loss: {total_loss.item():.4f}"
+                )
+
+        avg_metrics = {
+            "actor_loss": total_actor_loss / num_batches if num_batches > 0 else 0.0,
+            "critic_loss": total_critic_loss / num_batches if num_batches > 0 else 0.0,
+            "entropy": total_entropy / num_batches if num_batches > 0 else 0.0,
+        }
+
+        self.policy.reset_hidden()
         self.memory.clear_memory()
 
+        return avg_metrics
+
     def reset_hidden(self):
-        """Reset LSTM hidden state (chiamare a inizio episodio)."""
         self.policy.reset_hidden()
 
     def save(self, filename):
-        """Salva i pesi del modello."""
         os.makedirs(os.path.dirname(filename), exist_ok=True)
         torch.save(self.policy.state_dict(), filename)
 
     def load(self, filename):
-        """Carica i pesi del modello."""
         if os.path.exists(filename):
             self.policy.load_state_dict(torch.load(filename, map_location=self.device))
             print(f"[PPOAgent] Model loaded from {filename}")

@@ -14,7 +14,6 @@ class ActorCritic(nn.Module):
             use_lstm: Se True, usa LSTM per memoria temporale
         """
         super(ActorCritic, self).__init__()
-
         self.use_lstm = use_lstm
         self.hidden_size = hidden_size
 
@@ -55,6 +54,15 @@ class ActorCritic(nn.Module):
                 features = features.unsqueeze(1)  # [batch, 1, hidden]
 
             features, self.hidden_state = self.lstm(features, self.hidden_state)
+
+            # FIX CRITICO: Detach l'hidden state per prevenire il backward attraverso il grafo
+            # Questo permette all'LSTM di mantenere la memoria temporale senza mantenere
+            # il grafo computazionale che causa l'errore
+            if self.hidden_state is not None:
+                self.hidden_state = (
+                    self.hidden_state[0].detach(),
+                    self.hidden_state[1].detach(),
+                )
 
             # Rimuovi dimensione temporale
             if features.shape[1] == 1:

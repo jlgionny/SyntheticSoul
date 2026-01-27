@@ -12,7 +12,6 @@ from src.agents.ppo_agent import PPOAgent
 from src.env.hollow_knight_env import HollowKnightEnv
 
 
-# ============ AUTO PLOT GENERATOR IMPORT ============
 def auto_generate_plots(
     log_file, checkpoint_dir, algorithm="PPO", window=20, current_episode=0
 ):
@@ -57,7 +56,6 @@ def auto_generate_plots(
 
         if result.returncode == 0:
             print(f"[Auto Plot] ✓ Grafici generati in: {plots_dir}")
-            # Info file
             info_path = os.path.join(plots_dir, "info.txt")
             with open(info_path, "w") as f:
                 f.write("Training Snapshot\n")
@@ -77,143 +75,125 @@ def auto_generate_plots(
 
 
 class RewardCalculator:
-    """Reward Function ottimizzata per Mantis Lords."""
+    """Reward Function STABILE con FOCUS su attaccare"""
 
     def __init__(self):
-        self.prev_boss_health = None
-        self.prev_player_health = None
-        self.prev_distance_to_boss = None
         self.prev_mantis_killed = 0
         self.episode_start_time = None
+        self.last_damage_dealt = 0  # Track damage dealt THIS step
+        self.consecutive_far_steps = 0
+        self.consecutive_near_steps = 0
 
     def reset(self, initial_state=None):
-        self.prev_boss_health = None
-        self.prev_player_health = None
-        self.prev_distance_to_boss = None
-        # FIX: Forza sempre a 0 invece di leggere dall'environment
         self.prev_mantis_killed = 0
         self.episode_start_time = time.time()
+        self.last_damage_dealt = 0
+        self.consecutive_far_steps = 0
+        self.consecutive_near_steps = 0
 
     def calculate_reward(self, state_dict, prev_state, done, info=None):
+        """
+        FIX: prev_state è il VERO stato precedente, non state_dict stesso
+        """
         reward = 0.0
-
-        # Boss damage reward
-        if (
-            prev_state is not None
-            and "bossHealth" in state_dict
-            and "bossHealth" in prev_state
-        ):
-            boss_damage = prev_state["bossHealth"] - state_dict["bossHealth"]
-            if boss_damage > 0:
-                reward += boss_damage * 3.0
-
-        # Distance-based reward
         curr_dist = state_dict.get("distanceToBoss", 100.0)
-        if 5.0 <= curr_dist <= 8.0:
-            reward += 0.2
-        elif curr_dist < 3.0:
+
+        # ===== 1. BOSS DAMAGE (SOLO se prev_state è DIVERSO) =====
+        if prev_state is not None:
+            curr_boss_hp = state_dict.get("bossHealth", 0)
+            prev_boss_hp = prev_state.get("bossHealth", 0)
+
+            boss_damage = prev_boss_hp - curr_boss_hp
+
+            if boss_damage > 0 and boss_damage != self.last_damage_dealt:
+                damage_reward = boss_damage * 10.0  # Aumentato da 5.0
+                reward += damage_reward
+                self.last_damage_dealt = boss_damage
+                print(f"  [DAMAGE] Boss hit for {boss_damage} HP: +{damage_reward:.2f}")
+            elif boss_damage == 0:
+                self.last_damage_dealt = 0  # Reset
+
+        # ===== 2. DISTANCE REWARD (Strong incentive to approach) =====
+        if 3.0 <= curr_dist <= 7.0:
+            reward += 1.0  # Aumentato da 0.5
+            self.consecutive_near_steps += 1
+            self.consecutive_far_steps = 0
+
+            # Bonus per rimanere vicino
+            if self.consecutive_near_steps > 50:
+                reward += 0.5
+        elif curr_dist > 10.0:
+            penalty = 1.0 + (curr_dist - 10.0) * 0.2  # Scaling penalty
+            reward -= penalty
+            self.consecutive_far_steps += 1
+            self.consecutive_near_steps = 0
+
+            # Penalty crescente per rimanere lontano
+            if self.consecutive_far_steps > 100:
+                reward -= 0.5
+                if self.consecutive_far_steps % 100 == 0:
+                    print(f"  [WARNING] Too far for {self.consecutive_far_steps} steps")
+        elif curr_dist < 2.0:
             reward -= 0.3
-        elif curr_dist > 12.0:
-            reward -= 0.5
+            self.consecutive_near_steps = 0
 
-        # Distance change reward
-        if prev_state is not None and "distanceToBoss" in prev_state:
-            prev_dist = prev_state["distanceToBoss"]
+        # ===== 3. APPROACH BONUS =====
+        if prev_state is not None:
+            prev_dist = prev_state.get("distanceToBoss", 100.0)
             distance_change = prev_dist - curr_dist
-            if prev_dist > 10.0 and distance_change > 0:
-                reward += distance_change * 0.1
-            elif prev_dist < 4.0 and distance_change < 0:
-                reward += abs(distance_change) * 0.1
 
-        # Wall/spike penalties
-        terrain_info = state_dict.get("terrainInfo", [1.0, 1.0, 1.0, 1.0, 1.0])
-        wall_distance = terrain_info[2] if len(terrain_info) >= 3 else 1.0
-        if wall_distance < 0.1:
-            reward -= 50.0
-            print(f"  [CRITICAL] Wall collision imminent: -{50.0:.2f}")
-        elif wall_distance < 0.2:
-            reward -= 20.0
-            print(f"  [WARNING] Too close to spikes: -{20.0:.2f}")
-        elif wall_distance < 0.3:
-            reward -= 5.0
+            if prev_dist > 8.0 and distance_change > 0:
+                reward += distance_change * 0.8  # Aumentato da 0.5
+            elif prev_dist > 8.0 and distance_change < 0:
+                reward -= abs(distance_change) * 0.4
 
-        # Hazard penalties
-        hazards = state_dict.get("nearbyHazards", [])
-        for h in hazards:
-            if h.get("type") == "spikes":
-                spike_dist = h.get("distance", 100.0)
-                if spike_dist < 1.5:
-                    penalty = 30.0 * np.exp(-spike_dist)
-                    reward -= penalty
-                    print(f"  [Spike Hazard] Distance {spike_dist:.2f}: -{penalty:.2f}")
+        # ===== 4. HEALTH LOSS =====
+        if prev_state is not None:
+            curr_hp = state_dict.get("playerHealth", 0)
+            prev_hp = prev_state.get("playerHealth", 0)
+            health_loss = prev_hp - curr_hp
 
-        # Dodge reward
-        if hazards and prev_state is not None:
-            active_projectiles = [
-                h for h in hazards if h.get("type") in ["boomerang", "projectile"]
-            ]
-            if active_projectiles:
-                closest_proj = min(
-                    active_projectiles,
-                    key=lambda h: (h.get("relX", 0) ** 2 + h.get("relY", 0) ** 2)
-                    ** 0.5,
-                )
-                proj_dist = (
-                    closest_proj.get("relX", 0) ** 2 + closest_proj.get("relY", 0) ** 2
-                ) ** 0.5
-                if proj_dist < 3.0:
-                    curr_health = state_dict.get("playerHealth", 0)
-                    prev_health = prev_state.get("playerHealth", 0)
-                    if curr_health == prev_health:
-                        dodge_reward = 2.0 * (3.0 - proj_dist)
-                        reward += dodge_reward
-                        if info and info.get("action_name") == "DASH":
-                            reward += 1.0
-
-        # Health loss penalty
-        if (
-            prev_state is not None
-            and "playerHealth" in state_dict
-            and "playerHealth" in prev_state
-        ):
-            health_loss = prev_state["playerHealth"] - state_dict["playerHealth"]
             if health_loss > 0:
-                reward -= health_loss * 25.0
-                print(f"  [Reward] Health lost: -{health_loss * 25.0:.2f}")
+                penalty = health_loss * 8.0  # Aumentato da 5.0
+                reward -= penalty
+                print(f"  [DAMAGE TAKEN] Lost {health_loss} HP: -{penalty:.2f}")
 
-        # Mantis Lords kill reward
+        # ===== 5. MANTIS LORDS =====
         mantis_killed = state_dict.get("mantisLordsKilled", 0)
         if mantis_killed > self.prev_mantis_killed:
             new_kills = mantis_killed - self.prev_mantis_killed
-            mantis_bonus = new_kills * 150.0
-            reward += mantis_bonus
-            print(
-                f"  [MANTIS LORD KILLED] +{new_kills} defeated: +{mantis_bonus:.2f} (Total: {mantis_killed}/3)"
-            )
+            bonus = new_kills * 100.0  # Aumentato da 50.0
+            reward += bonus
+            print(f"  [MANTIS KILLED] +{new_kills}: +{bonus:.2f}")
         self.prev_mantis_killed = mantis_killed
 
-        # Time penalty
-        reward -= 0.005
+        # ===== 6. TIME PENALTY =====
+        reward -= 0.001
 
-        # Terminal rewards/penalties
+        # ===== 7. TERMINAL REWARDS =====
         if done:
             if state_dict.get("isDead", False):
-                reward -= 150.0
-                print("  [Reward] Player died: -150.0")
+                reward -= 30.0  # Aumentato da 20.0
+                print("  [DEATH] Player died: -30.0")
             elif state_dict.get("bossDefeated", False):
-                health_bonus = state_dict.get("playerHealth", 0) * 50.0
-                total_victory = 500.0 + health_bonus
-                reward += total_victory
-                print(f"  [Reward] Boss defeated: +{total_victory:.2f}")
+                health_bonus = state_dict.get("playerHealth", 0) * 10.0
+                total = 300.0 + health_bonus  # Aumentato da 200.0
+                reward += total
+                print(f"  [VICTORY] Boss defeated: +{total:.2f}")
 
-        # Airborne penalty
-        floor_distance = terrain_info[0] if len(terrain_info) >= 1 else 1.0
-        if not state_dict.get("isGrounded", True) and floor_distance > 0.6:
-            reward -= 3.0
+        # ===== 8. MOVEMENT BONUS (Anti-idle) =====
+        vel_x = state_dict.get("playerVelocityX", 0.0)
+        vel_y = state_dict.get("playerVelocityY", 0.0)
+        is_moving = abs(vel_x) > 0.2 or abs(vel_y) > 0.2
 
-        # Facing boss reward
-        if state_dict.get("isFacingBoss", False) and curr_dist < 10.0:
+        if is_moving:
             reward += 0.05
+        else:
+            reward -= 0.15  # Aumentato penalty per stare fermo
+
+        # ===== 9. FACING BOSS =====
+        if state_dict.get("isFacingBoss", False):
+            reward += 0.15  # Aumentato da 0.1
 
         return reward
 
@@ -246,9 +226,8 @@ def preprocess_state(state_dict):
     features.append(state_dict.get("bossHealth", 0) / 1000.0)
     features.append(state_dict.get("distanceToBoss", 100.0) / 20.0)
     features.append(float(state_dict.get("isFacingBoss", False)))
-
     dist = state_dict.get("distanceToBoss", 100.0)
-    optimal_zone = 6.5
+    optimal_zone = 5.0
     zone_deviation = abs(dist - optimal_zone) / 20.0
     features.append(zone_deviation)
 
@@ -272,21 +251,19 @@ def preprocess_state(state_dict):
 def train_ppo(
     num_episodes=1000,
     max_steps_per_episode=6000,
-    update_timestep=1800,
-    learning_rate=2e-4,
-    gamma=0.995,
-    gae_lambda=0.97,
-    clip_param=0.15,
-    n_epochs=8,
+    update_timestep=800,
+    learning_rate=5e-5,
+    gamma=0.99,
+    gae_lambda=0.95,
+    clip_param=0.2,
+    n_epochs=4,
     save_freq=25,
-    checkpoint_dir="checkpoints_ppo",
+    checkpoint_dir="checkpoints_ppo_stable",
     host="localhost",
     port=5555,
     plot_freq=100,
 ):
-    """Training PPO con grafici organizzati in sottocartelle."""
-
-    # Salva i checkpoint nella cartella AI_Agents
+    """Training PPO con FIX per double-print bug."""
     ai_agents_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     checkpoint_dir_full = os.path.join(ai_agents_root, checkpoint_dir)
     os.makedirs(checkpoint_dir_full, exist_ok=True)
@@ -300,7 +277,6 @@ def train_ppo(
     action_size = 8
 
     print(f"[Train PPO] State size: {state_size}, Action size: {action_size}")
-    print(f"[Train PPO] Grafici organizzati in sottocartelle ogni {plot_freq} episodi")
 
     agent = PPOAgent(
         state_size=state_size,
@@ -327,9 +303,12 @@ def train_ppo(
     global_step = 0
 
     log_file = os.path.join(checkpoint_dir_full, "training_log.txt")
+
     if not os.path.exists(log_file):
         with open(log_file, "w") as f:
-            f.write("episode,total_reward,steps,global_step,mantis_killed\n")
+            f.write(
+                "episode,total_reward,steps,global_step,mantis_killed,actor_loss,critic_loss,entropy\n"
+            )
 
     print(f"\n{'='*60}")
     print(f"Starting PPO Training - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -342,7 +321,12 @@ def train_ppo(
         agent.reset_hidden()
 
         episode_reward = 0.0
-        prev_state_dict = None
+        prev_state_dict = None  # FIX: Inizia come None
+
+        episode_actor_loss = 0.0
+        episode_critic_loss = 0.0
+        episode_entropy = 0.0
+        num_updates = 0
 
         print(f"\n[Episode {episode + 1}/{num_episodes}] Starting...")
 
@@ -353,32 +337,42 @@ def train_ppo(
             next_state_dict, done, info = env.step(action)
             next_state = preprocess_state(next_state_dict)
 
+            # FIX: Passa il VERO prev_state_dict, non state_dict
             reward = reward_calc.calculate_reward(
                 next_state_dict, prev_state_dict, done, info
             )
+
             episode_reward += reward
 
             agent.store_transition(state, action, log_prob, val, reward, done)
 
             if global_step % update_timestep == 0:
                 print(f"  [PPO Update] Updating policy at step {global_step}...")
-                agent.learn()
 
+                metrics = agent.learn()
+                if metrics:
+                    episode_actor_loss += metrics.get("actor_loss", 0.0)
+                    episode_critic_loss += metrics.get("critic_loss", 0.0)
+                    episode_entropy += metrics.get("entropy", 0.0)
+                    num_updates += 1
+
+            # FIX: Aggiorna prev_state_dict QUI, DOPO il calcolo reward
             state = next_state
-            prev_state_dict = state_dict
-            state_dict = next_state_dict
+            prev_state_dict = next_state_dict  # ← QUESTO è il fix
 
             if step % 100 == 0:
                 print(
-                    f"  [Step {step}] Reward: {episode_reward:.2f}, Global Step: {global_step}"
+                    f"  [Step {step}] Reward: {episode_reward:.2f}, Dist: {next_state_dict.get('distanceToBoss', 0):.1f}"
                 )
 
             if done:
                 reason = (
                     "Player died"
-                    if state_dict.get("isDead")
+                    if next_state_dict.get("isDead")
                     else (
-                        "Boss defeated" if state_dict.get("bossDefeated") else "Unknown"
+                        "Boss defeated"
+                        if next_state_dict.get("bossDefeated")
+                        else "Unknown"
                     )
                 )
                 print(f"  [Episode End] Reason: {reason}")
@@ -386,18 +380,24 @@ def train_ppo(
 
         episode_rewards.append(episode_reward)
 
-        # Usa il valore tracciato dalla RewardCalculator invece di state_dict
         mantis_killed = reward_calc.prev_mantis_killed
+
+        avg_actor_loss = episode_actor_loss / num_updates if num_updates > 0 else 0.0
+        avg_critic_loss = episode_critic_loss / num_updates if num_updates > 0 else 0.0
+        avg_entropy = episode_entropy / num_updates if num_updates > 0 else 0.0
 
         print(f"\n[Episode {episode + 1}] Summary:")
         print(f"  Total Reward: {episode_reward:.2f}")
         print(f"  Steps in Episode: {step + 1}")
         print(f"  Global Steps: {global_step}")
         print(f"  Mantis Lords Killed: {mantis_killed}/3")
+        print(f"  Avg Actor Loss: {avg_actor_loss:.4f}")
+        print(f"  Avg Critic Loss: {avg_critic_loss:.4f}")
+        print(f"  Avg Entropy: {avg_entropy:.4f}")
 
         with open(log_file, "a") as f:
             f.write(
-                f"{episode + 1},{episode_reward:.2f},{step + 1},{global_step},{mantis_killed}\n"
+                f"{episode + 1},{episode_reward:.2f},{step + 1},{global_step},{mantis_killed},{avg_actor_loss:.4f},{avg_critic_loss:.4f},{avg_entropy:.4f}\n"
             )
 
         if episode_reward > best_reward:
@@ -414,7 +414,6 @@ def train_ppo(
             agent.save(latest_checkpoint)
             print(f"  [Checkpoint] Saved to {checkpoint_path}")
 
-        # ============ AUTO GENERATE PLOTS IN ORGANIZED FOLDERS ============
         if (episode + 1) % plot_freq == 0 or (episode + 1) == num_episodes:
             print(f"\n{'='*60}")
             print(f"[PLOTS] Generazione grafici episodio {episode + 1}/{num_episodes}")
@@ -442,33 +441,28 @@ if __name__ == "__main__":
     HYPERPARAMS = {
         "num_episodes": 1000,
         "max_steps_per_episode": 6000,
-        "update_timestep": 1800,
-        "learning_rate": 2e-4,
-        "gamma": 0.995,
-        "gae_lambda": 0.97,
-        "clip_param": 0.15,
-        "n_epochs": 8,
+        "update_timestep": 800,
+        "learning_rate": 5e-5,
+        "gamma": 0.99,
+        "gae_lambda": 0.95,
+        "clip_param": 0.2,
+        "n_epochs": 4,
         "save_freq": 25,
-        "checkpoint_dir": "checkpoints_ppo_mantis",
+        "checkpoint_dir": "checkpoints_ppo_fixed",  # NUOVA CARTELLA
         "host": "localhost",
         "port": 5555,
         "plot_freq": 100,
     }
 
     print("=" * 60)
-    print("PPO Training - Mantis Lords - ORGANIZED PLOTS")
+    print("PPO Training - FIXED: Double-print bug + Reward tuning")
     print("=" * 60)
-    print("\nKey Features:")
-    print("  ✓ Auto-generated plots every 100 episodes")
-    print("  ✓ Organized in subfolders (episode_100, episode_200, ...)")
-    print("  ✓ Final plots at episode 1000")
-    print("  ✓ Mantis Lords progress tracking")
-    print("\nStructure:")
-    print("  plots_ppo/")
-    print("    ├── episode_100/")
-    print("    ├── episode_200/")
-    print("    ├── ...")
-    print("    └── episode_1000_final/")
+    print("\nKey Fixes:")
+    print("  ✓ Fixed double-print bug (prev_state assignment)")
+    print("  ✓ Increased boss damage reward: 5.0 → 10.0")
+    print("  ✓ Increased distance reward: 0.5 → 1.0")
+    print("  ✓ Strong penalty for staying far (scaling)")
+    print("  ✓ Increased idle penalty: 0.1 → 0.15")
     print("\nHyperparameters:")
     for key, value in HYPERPARAMS.items():
         print(f"  {key}: {value}")
