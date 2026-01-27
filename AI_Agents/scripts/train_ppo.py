@@ -1,10 +1,11 @@
 """
 PPO Training Script for Hollow Knight Mantis Lords Boss Fight.
-Optimized with clean reward shaping and state preprocessing.
+Optimized with aggressive reward shaping and curriculum learning.
 """
 
 import os
 import sys
+import time
 import numpy as np
 from datetime import datetime
 
@@ -78,15 +79,17 @@ def preprocess_state(state_dict: dict) -> np.ndarray:
 def train_ppo(
     num_episodes: int = 1000,
     max_steps: int = 6000,
-    update_interval: int = 800,
-    learning_rate: float = 5e-5,
-    gamma: float = 0.99,
+    update_interval: int = 512,  # RIDOTTO da 800 - update più frequenti
+    learning_rate: float = 3e-5,  # RIDOTTO da 5e-5 - learning più stabile
+    gamma: float = 0.995,  # AUMENTATO da 0.99 - più valore a reward futuri
+    entropy_coef_start: float = 0.20,  # AUMENTATO - esplorazione aggressiva
+    entropy_coef_end: float = 0.08,  # NUOVO - decadimento curriculum
     save_freq: int = 25,
     checkpoint_dir: str = "checkpoints_ppo_optimized",
     host: str = "localhost",
     port: int = 5555,
 ):
-    """Train PPO agent on Mantis Lords."""
+    """Train PPO agent on Mantis Lords with curriculum learning."""
 
     # Setup directories
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -95,6 +98,15 @@ def train_ppo(
 
     print("=" * 60)
     print(f"PPO Training - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 60)
+    print("OPTIMIZATIONS:")
+    print("  ✓ Damage reward: 40 → 200 (+400%)")
+    print("  ✓ Kill reward: 400 → 1000 (+150%)")
+    print("  ✓ Attack reward: 8 → 15 (+87%)")
+    print("  ✓ Survival reward: +0.1 per step (NEW)")
+    print("  ✓ Progressive death penalty (100/50/20)")
+    print("  ✓ Entropy curriculum: 0.20 → 0.08")
+    print("  ✓ Update interval: 800 → 512")
     print("=" * 60)
 
     # Initialize environment with reward shaping
@@ -106,21 +118,31 @@ def train_ppo(
 
     print(f"[PPO] State size: {state_size}, Action size: {action_size}")
 
-    # Initialize agent
+    # Initialize agent with high initial entropy
     agent = PPOAgent(
         state_size=state_size,
         action_size=action_size,
         learning_rate=learning_rate,
         gamma=gamma,
+        entropy_coef=entropy_coef_start,
         use_lstm=True,
     )
 
     # Load checkpoint if exists
     latest_checkpoint = os.path.join(checkpoint_dir_full, "latest_ppo.pth")
+    start_episode = 0
     if os.path.exists(latest_checkpoint):
         try:
             agent.load(latest_checkpoint)
-            print("[PPO] Resumed from checkpoint")
+            # Try to read episode number from log
+            logfile = os.path.join(checkpoint_dir_full, "training_log.txt")
+            if os.path.exists(logfile):
+                with open(logfile, "r") as f:
+                    lines = f.readlines()
+                    if len(lines) > 1:
+                        last_line = lines[-1].strip().split(",")
+                        start_episode = int(last_line[0])
+            print(f"[PPO] Resumed from episode {start_episode}")
         except Exception as e:
             print(f"[PPO] Could not load checkpoint: {e}")
 
@@ -129,14 +151,21 @@ def train_ppo(
     if not os.path.exists(logfile):
         with open(logfile, "w") as f:
             f.write(
-                "episode,reward,steps,damage_dealt,boss_hits,mantis_killed,actor_loss,critic_loss,entropy\n"
+                "episode,total_reward,steps,damage_dealt,boss_hits,mantis_killed,steps_survived,actor_loss,critic_loss,entropy\n"
             )
 
     best_reward = -float("inf")
     episode_rewards = []
 
     # Training loop
-    for episode in range(num_episodes):
+    for episode in range(start_episode, num_episodes):
+        # CURRICULUM LEARNING - Decadimento entropy
+        progress = episode / num_episodes
+        current_entropy = (
+            entropy_coef_start - (entropy_coef_start - entropy_coef_end) * progress
+        )
+        agent.entropy_coef = current_entropy
+
         state_dict = env.reset()
         state = preprocess_state(state_dict)
         agent.reset_hidden()
@@ -148,7 +177,9 @@ def train_ppo(
         entropy_sum = 0.0
         num_updates = 0
 
-        print(f"\n[Episode {episode + 1}/{num_episodes}] Starting...")
+        print(f"\n{'='*60}")
+        print(f"[Episode {episode + 1}/{num_episodes}] Entropy: {current_entropy:.3f}")
+        print(f"{'='*60}")
 
         for step in range(max_steps):
             # Select action
@@ -167,6 +198,7 @@ def train_ppo(
 
             # Update policy
             if len(agent.buffer) >= update_interval:
+                print(f"  [Update] Step {step}: Updating policy...")
                 metrics = agent.learn()
                 if metrics:
                     actor_loss_sum += metrics["actor_loss"]
@@ -175,22 +207,25 @@ def train_ppo(
                     num_updates += 1
 
             # Log progress
-            if step % 200 == 0:
+            if step % 200 == 0 and step > 0:
                 dist = next_state_dict.get("distanceToBoss", 0)
                 hits = info.get("total_boss_hits", 0)
+                damage = info.get("total_damage_dealt", 0)
                 print(
-                    f"  Step {step}: R={episode_reward:.1f}, D={dist:.1f}, Hits={hits}"
+                    f"  Step {step}: R={episode_reward:.1f}, D={dist:.1f}, Hits={hits}, Dmg={damage:.1f}"
                 )
 
             if done:
                 if info.get("death"):
-                    print("  [End] Player died")
+                    survived = info.get("steps_survived", 0)
+                    print(f"  [End] Player died (survived {survived} steps)")
                 elif info.get("victory"):
-                    print("  [End] Victory!")
+                    print("  [End] 🎉 VICTORY!")
                 break
 
         # Final policy update
         if len(agent.buffer) > 0:
+            print("  [Final Update] Processing remaining buffer...")
             metrics = agent.learn()
             if metrics:
                 actor_loss_sum += metrics["actor_loss"]
@@ -204,18 +239,24 @@ def train_ppo(
         avg_entropy = entropy_sum / num_updates if num_updates > 0 else 0.0
 
         episode_rewards.append(episode_reward)
-        avg_reward_50 = np.mean(episode_rewards[-50:])
+        avg_reward_50 = (
+            np.mean(episode_rewards[-50:])
+            if len(episode_rewards) >= 50
+            else np.mean(episode_rewards)
+        )
 
         # Episode summary
-        print(f"\n[Episode {episode + 1}] Summary:")
+        print(f"\n{'='*60}")
+        print(f"[Episode {episode + 1}] SUMMARY")
+        print(f"{'='*60}")
         print(f"  Reward: {episode_reward:.2f} | Avg (50): {avg_reward_50:.2f}")
-        print(f"  Steps: {episode_steps}")
+        print(f"  Steps: {episode_steps} | Survived: {info.get('steps_survived', 0)}")
         print(f"  Damage Dealt: {info.get('total_damage_dealt', 0):.1f}")
         print(f"  Boss Hits: {info.get('total_boss_hits', 0)}")
         print(f"  Mantis Killed: {next_state_dict.get('mantisLordsKilled', 0)}/3")
-        print(
-            f"  Loss: Actor={avg_actor_loss:.4f}, Critic={avg_critic_loss:.4f}, Entropy={avg_entropy:.4f}"
-        )
+        print(f"  Loss: Actor={avg_actor_loss:.4f}, Critic={avg_critic_loss:.4f}")
+        print(f"  Entropy: {avg_entropy:.4f} (target={current_entropy:.3f})")
+        print(f"{'='*60}")
 
         # Log to file
         with open(logfile, "a") as f:
@@ -223,6 +264,7 @@ def train_ppo(
                 f"{episode + 1},{episode_reward:.2f},{episode_steps},"
                 f"{info.get('total_damage_dealt', 0):.1f},{info.get('total_boss_hits', 0)},"
                 f"{next_state_dict.get('mantisLordsKilled', 0)},"
+                f"{info.get('steps_survived', 0)},"
                 f"{avg_actor_loss:.4f},{avg_critic_loss:.4f},{avg_entropy:.4f}\n"
             )
 
@@ -231,7 +273,7 @@ def train_ppo(
             best_reward = episode_reward
             best_path = os.path.join(checkpoint_dir_full, "best_ppo.pth")
             agent.save(best_path)
-            print(f"  🌟 New best! Saved to {best_path}")
+            print(f"  🌟 NEW BEST REWARD! Saved to {best_path}")
 
         # Periodic checkpoint
         if (episode + 1) % save_freq == 0:
@@ -242,10 +284,21 @@ def train_ppo(
             agent.save(latest_checkpoint)
             print("  💾 Checkpoint saved")
 
+        # Early stopping check
+        if len(episode_rewards) >= 100:
+            recent_avg = np.mean(episode_rewards[-100:])
+            if recent_avg > 500:  # Se media ultimi 100 > 500, sta imparando bene
+                print(
+                    f"\n✓ Strong performance detected (avg={recent_avg:.1f})! Training stabilized."
+                )
+
     # Training complete
     print("\n" + "=" * 60)
-    print("Training Complete!")
+    print("TRAINING COMPLETE!")
+    print("=" * 60)
     print(f"Best Reward: {best_reward:.2f}")
+    print(f"Final Avg (50 eps): {avg_reward_50:.2f}")
+    print(f"Total Episodes: {num_episodes}")
     print("=" * 60)
 
     final_path = os.path.join(checkpoint_dir_full, "final_ppo.pth")
@@ -257,19 +310,27 @@ if __name__ == "__main__":
     HYPERPARAMS = {
         "num_episodes": 1000,
         "max_steps": 6000,
-        "update_interval": 800,
-        "learning_rate": 5e-5,
-        "gamma": 0.99,
+        "update_interval": 512,
+        "learning_rate": 3e-5,
+        "gamma": 0.995,
+        "entropy_coef_start": 0.20,
+        "entropy_coef_end": 0.08,
         "save_freq": 25,
         "checkpoint_dir": "checkpoints_ppo_optimized",
         "host": "localhost",
         "port": 5555,
     }
 
+    print("=" * 60)
     print("PPO Training - Mantis Lords Boss Fight")
-    print("Hyperparameters:")
+    print("OPTIMIZED VERSION with Curriculum Learning")
+    print("=" * 60)
+    print("\nHyperparameters:")
     for key, value in HYPERPARAMS.items():
         print(f"  {key}: {value}")
+    print("\n" + "=" * 60)
+    print("Starting in 3 seconds...")
+    time.sleep(3)
     print()
 
     train_ppo(**HYPERPARAMS)

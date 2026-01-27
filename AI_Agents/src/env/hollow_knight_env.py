@@ -65,6 +65,7 @@ class HollowKnightEnv:
         self.steps_far = 0
         self.total_damage_dealt = 0
         self.total_boss_hits = 0
+        self.steps_survived = 0
 
     def _connect(self):
         """Establish TCP connection to C# mod."""
@@ -119,13 +120,12 @@ class HollowKnightEnv:
         self, state: Dict, action_name: str, done: bool
     ) -> Tuple[float, Dict[str, Any]]:
         """
-        Compute shaped reward for PPO training.
-        Optimized for Mantis Lords boss fight.
+        FIXED: Reward shaping aggressivo per incentivare il combattimento.
+        Riduce penalità passive, aumenta reward per combattimento.
         """
         reward = 0.0
         info = {}
 
-        # Extract values
         player_hp = state.get("playerHealth", 5)
         boss_hp = state.get("bossHealth", 100.0)
         distance = state.get("distanceToBoss", 100.0)
@@ -136,11 +136,11 @@ class HollowKnightEnv:
         is_grounded = state.get("isGrounded", False)
         facing_boss = state.get("isFacingBoss", False)
 
-        # 1. BOSS DAMAGE (highest priority)
+        # 1. BOSS DAMAGE - MASSIMA PRIORITÀ (aumentato 5x)
         if self.prev_boss_health is not None:
             damage_dealt = self.prev_boss_health - boss_hp
             if damage_dealt > 0:
-                damage_reward = damage_dealt * 40.0
+                damage_reward = damage_dealt * 200.0  # Era 40.0
                 reward += damage_reward
                 self.total_damage_dealt += damage_dealt
                 self.total_boss_hits += 1
@@ -153,30 +153,33 @@ class HollowKnightEnv:
         if self.prev_state is not None:
             prev_mantis = self.prev_state.get("mantisLordsKilled", 0)
             if mantis_killed > prev_mantis:
-                kill_reward = 400.0
+                kill_reward = 1000.0  # Era 400.0
                 reward += kill_reward
                 info["mantis_killed"] = True
                 print(f"🏆 Mantis Lord #{mantis_killed} defeated! (+{kill_reward:.1f})")
 
-        # 3. ATTACK ACTION REWARD (combat encouragement)
+        # 3. ATTACK ACTION REWARD (aumentato)
         if action_name == "ATTACK":
-            if 2.0 <= distance <= 8.0:
-                attack_reward = 8.0
+            if 2.0 <= distance <= 10.0:
+                attack_reward = 15.0  # Era 8.0
                 reward += attack_reward
             elif distance < 2.0:
-                attack_reward = 6.0
+                attack_reward = 12.0  # Era 6.0
                 reward += attack_reward
 
-        # 4. DISTANCE SHAPING (approach bonus)
+        # 4. SURVIVAL REWARD - NUOVO! Reward per restare vivo
+        if not done:
+            survival_reward = 0.1  # Piccolo bonus per ogni step vivo
+            reward += survival_reward
+
+        # 5. DISTANCE SHAPING (solo bonus per avvicinamento)
         if self.prev_distance is not None and distance < 90.0:
             distance_change = self.prev_distance - distance
-            if distance_change > 0.3:
-                if distance > 3.0:
-                    reward += distance_change * 0.4
-            elif distance_change < -0.5 and distance > 15.0:
-                reward -= abs(distance_change) * 1.5
+            if distance_change > 0.5 and distance > 3.0:
+                reward += distance_change * 1.0  # Era 0.4
+            # RIMUOVI penalità per allontanamento - lascia che l'agente esplori
 
-        # 5. WALL COLLISION PENALTY (prevent wall-banging)
+        # 6. WALL COLLISION PENALTY (ridotta)
         if len(terrain) >= 3:
             wall_dist = terrain[2]
             is_moving = action_name in ["MOVE_LEFT", "MOVE_RIGHT"]
@@ -184,62 +187,76 @@ class HollowKnightEnv:
 
             if is_moving and is_stuck and wall_dist < 0.15 and is_grounded:
                 self.wall_stuck_counter += 1
-                if self.wall_stuck_counter > 5:
-                    wall_penalty = -2.5
+                if self.wall_stuck_counter > 10:  # Era 5
+                    wall_penalty = -1.0  # Era -2.5
                     reward += wall_penalty
             else:
                 self.wall_stuck_counter = max(0, self.wall_stuck_counter - 1)
 
-        # 6. IDLE NEAR BOSS PENALTY
+        # 7. IDLE PENALTY (ridotta molto)
         is_idle = abs(vel_x) < 0.15 and abs(vel_y) < 0.15
         if distance < 12.0 and is_idle:
             self.idle_counter += 1
-            if self.idle_counter > 40:
-                idle_penalty = (self.idle_counter - 40) * 0.08
+            if self.idle_counter > 60:  # Era 40
+                idle_penalty = (self.idle_counter - 60) * 0.02  # Era 0.08
                 reward -= idle_penalty
         else:
             self.idle_counter = 0
 
-        # 7. FAR FROM BOSS PENALTY
-        if distance > 18.0:
+        # 8. FAR FROM BOSS PENALTY (ridotta molto)
+        if distance > 25.0:  # Era 18.0
             self.steps_far += 1
-            if self.steps_far > 60:
-                far_penalty = (self.steps_far - 60) * 0.25
+            if self.steps_far > 100:  # Era 60
+                far_penalty = (self.steps_far - 100) * 0.05  # Era 0.25
                 reward -= far_penalty
         else:
             self.steps_far = 0
 
-        # 8. HEALTH LOSS PENALTY
+        # 9. HEALTH LOSS PENALTY (ridotta)
         if self.prev_player_health is not None:
             hp_loss = self.prev_player_health - player_hp
             if hp_loss > 0:
-                hp_penalty = hp_loss * 12.0
+                hp_penalty = hp_loss * 8.0  # Era 12.0
                 reward -= hp_penalty
                 info["damage_taken"] = hp_loss
                 print(f"💔 Damage taken: -{hp_loss} HP (-{hp_penalty:.1f})")
 
-        # 9. FACING BOSS BONUS (small orientation reward)
-        if facing_boss and distance < 12.0:
-            reward += 0.15
+        # 10. FACING BOSS BONUS
+        if facing_boss and distance < 15.0:
+            reward += 0.3  # Era 0.15
 
-        # 10. TIME PENALTY (encourage efficiency)
-        reward -= 0.0008
+        # 11. TIME PENALTY - QUASI ELIMINATA
+        reward -= 0.0001  # Era 0.0008
 
-        # 11. TERMINAL REWARDS
+        # 12. TERMINAL REWARDS
         if done:
             if state.get("isDead", False):
-                death_penalty = 40.0
+                # PENALITÀ MORTE BASATA SU DURATA - punisci morte rapida
+                steps_survived = getattr(self, "steps_survived", 0)
+                if steps_survived < 50:
+                    death_penalty = 100.0  # Morte rapidissima
+                elif steps_survived < 200:
+                    death_penalty = 50.0  # Morte prematura
+                else:
+                    death_penalty = 20.0  # Morte dopo combattimento
+
                 reward -= death_penalty
                 info["death"] = True
-                print(f"💀 Death penalty: -{death_penalty:.1f}")
+                print(
+                    f"💀 Death penalty: -{death_penalty:.1f} (survived {steps_survived} steps)"
+                )
             elif state.get("bossDefeated", False) or mantis_killed == 3:
-                health_bonus = player_hp * 15.0
-                victory_reward = 800.0 + health_bonus
+                health_bonus = player_hp * 20.0
+                victory_reward = 2000.0 + health_bonus  # Era 800.0
                 reward += victory_reward
                 info["victory"] = True
                 print(f"🎉 VICTORY! (+{victory_reward:.1f})")
 
-        # Update tracking
+        # Track steps survived
+        if not hasattr(self, "steps_survived"):
+            self.steps_survived = 0
+        self.steps_survived += 1
+
         self.prev_boss_health = boss_hp
         self.prev_player_health = player_hp
         self.prev_distance = distance
@@ -247,6 +264,7 @@ class HollowKnightEnv:
 
         info["total_damage_dealt"] = self.total_damage_dealt
         info["total_boss_hits"] = self.total_boss_hits
+        info["steps_survived"] = self.steps_survived
 
         return reward, info
 

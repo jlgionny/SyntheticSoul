@@ -180,7 +180,7 @@ class PPOAgent:
         gae_lambda: float = 0.95,
         policy_clip: float = 0.2,
         value_loss_coef: float = 0.5,
-        entropy_coef: float = 0.05,
+        entropy_coef: float = 0.15,
         max_grad_norm: float = 0.5,
         n_epochs: int = 4,
         batch_size: int = 64,
