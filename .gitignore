@@ -7,8 +7,6 @@
 ###########################
 # IDE E EDITOR
 ###########################
-# Visual Studio Code
-.vscode/
 
 # Visual Studio (Classico)
 .vs/
