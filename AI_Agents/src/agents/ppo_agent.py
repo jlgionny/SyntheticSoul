@@ -175,12 +175,12 @@ class PPOAgent:
         action_size: int,
         hidden_size: int = 384,
         use_lstm: bool = True,
-        learning_rate: float = 5e-5,
-        gamma: float = 0.99,
+        learning_rate: float = 3e-5,
+        gamma: float = 0.995,
         gae_lambda: float = 0.95,
         policy_clip: float = 0.2,
         value_loss_coef: float = 0.5,
-        entropy_coef: float = 0.15,
+        entropy_coef: float = 0.20,
         max_grad_norm: float = 0.5,
         n_epochs: int = 4,
         batch_size: int = 64,
@@ -337,6 +337,11 @@ class PPOAgent:
 
         # Clear buffer
         self.buffer.clear()
+
+        # CRITICAL FIX: Reset hidden state after training to avoid batch size mismatch
+        # After training with batch_size=64, hidden state has shape [1, 64, 384]
+        # But select_action() expects [1, 1, 384] for single sample inference
+        self.policy.reset_hidden()
 
         return {
             "actor_loss": total_actor_loss / num_updates,

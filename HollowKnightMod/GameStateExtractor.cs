@@ -31,13 +31,13 @@ namespace SyntheticSoulMod
 
         // TERRAIN INFO
         // 0: Floor Distance (sotto)
-        // 1: Gap Ahead (avanti-basso)
+        // 1: Ceiling Distance (sopra)
         // 2: Wall Ahead (avanti)
-        // 3: Ceiling Ahead (avanti-alto)
-        // 4: Ceiling Distance (sopra)
+        // 3: Wall Behind (dietro)
+        // 4: Platform check diagonal
         public float[] terrainInfo;
 
-        // BOSS STATE (ENHANCED)
+        // BOSS STATE - FIXED NORMALIZATION
         public float bossX;
         public float bossY;
         public float bossHealth;
@@ -86,7 +86,7 @@ namespace SyntheticSoulMod
         private LayerMask enemyLayer;
         private LayerMask hazardLayer; // Include sia Terrain che Hazards
 
-        // NUOVO: Traccia il numero di Mantis Lords uccise (per loggare solo i cambiamenti)
+        // NUOVO: Traccia il numero di Mantis Lords uccise
         private int prevMantisLordsKilled = 0;
 
         public GameStateExtractor()
@@ -124,10 +124,10 @@ namespace SyntheticSoulMod
             // PLAYER STATE
             ExtractPlayerState(hero, state);
 
-            // TERRAIN INFO (with Hazards/Spikes)
+            // TERRAIN INFO with Hazards/Spikes
             ExtractTerrainInfo();
 
-            // BOSS STATE (ENHANCED)
+            // BOSS STATE - FIXED NORMALIZATION
             ExtractBossState(hero, state);
 
             // HAZARDS (Projectiles, Boomerangs, Spikes)
@@ -169,7 +169,7 @@ namespace SyntheticSoulMod
         }
 
         /// <summary>
-        /// Estrae informazioni sul terreno E hazards fissi (spikes) usando raycasts.
+        /// Estrae informazioni sul terreno usando raycasts.
         /// </summary>
         private float[] ExtractTerrainInfo()
         {
@@ -179,32 +179,26 @@ namespace SyntheticSoulMod
 
             // Ground check (index 0)
             RaycastHit2D groundHit = Physics2D.Raycast(playerPos, Vector2.down, 2f, terrainMask);
-            terrainInfo[0] = groundHit.collider != null ? groundHit.distance / 2f : 1.0f;
+            terrainInfo[0] = groundHit.collider != null ? (groundHit.distance / 2f) : 1.0f;
 
             // Ceiling check (index 1)
             RaycastHit2D ceilingHit = Physics2D.Raycast(playerPos, Vector2.up, 2f, terrainMask);
-            terrainInfo[1] = ceilingHit.collider != null ? ceilingHit.distance / 2f : 1.0f;
+            terrainInfo[1] = ceilingHit.collider != null ? (ceilingHit.distance / 2f) : 1.0f;
 
-            // Wall ahead check (index 2) - CON DEBUG LOG
+            // Wall ahead check (index 2)
             Vector2 facingDir = HeroController.instance.cState.facingRight ? Vector2.right : Vector2.left;
             RaycastHit2D wallHit = Physics2D.Raycast(playerPos, facingDir, 3f, terrainMask);
-            terrainInfo[2] = wallHit.collider != null ? wallHit.distance / 3f : 1.0f;
-
-            // DEBUG LOG - Rimuovi dopo test
-            if (wallHit.collider != null && wallHit.distance < 0.5f)
-            {
-                Debug.Log($"[WALL DETECT] Distance: {wallHit.distance:F2}, Normalized: {terrainInfo[2]:F2}, Facing: {(HeroController.instance.cState.facingRight ? "Right" : "Left")}");
-            }
+            terrainInfo[2] = wallHit.collider != null ? (wallHit.distance / 3f) : 1.0f;
 
             // Wall behind check (index 3)
             Vector2 behindDir = HeroController.instance.cState.facingRight ? Vector2.left : Vector2.right;
             RaycastHit2D wallBehindHit = Physics2D.Raycast(playerPos, behindDir, 3f, terrainMask);
-            terrainInfo[3] = wallBehindHit.collider != null ? wallBehindHit.distance / 3f : 1.0f;
+            terrainInfo[3] = wallBehindHit.collider != null ? (wallBehindHit.distance / 3f) : 1.0f;
 
             // Platform check diagonal (index 4)
             Vector2 diagDir = new Vector2(facingDir.x, -0.5f).normalized;
             RaycastHit2D diagHit = Physics2D.Raycast(playerPos, diagDir, 3f, terrainMask);
-            terrainInfo[4] = diagHit.collider != null ? diagHit.distance / 3f : 1.0f;
+            terrainInfo[4] = diagHit.collider != null ? (diagHit.distance / 3f) : 1.0f;
 
             return terrainInfo;
         }
@@ -223,12 +217,11 @@ namespace SyntheticSoulMod
         }
 
         /// <summary>
-        /// Estrae informazioni sul boss con ENHANCED DIRECTIONAL AWARENESS e Mantis Lords Tracking.
+        /// Estrae informazioni sul boss con FIXED NORMALIZATION (consistente con wall distance).
         /// </summary>
         private void ExtractBossState(HeroController hero, GameState state)
         {
             GameObject boss = FindBoss();
-
             if (boss != null)
             {
                 var bossPos = boss.transform.position;
@@ -241,8 +234,11 @@ namespace SyntheticSoulMod
                 float dy = bossPos.y - playerPos.y;
                 state.distanceToBoss = Mathf.Sqrt(dx * dx + dy * dy);
 
-                state.bossRelativeX = dx / 20.0f;
-                state.bossRelativeY = dy / 20.0f;
+                // FIX CRITICO: Normalizza con Clamp per evitare saturazione
+                // Arena Mantis Lords: ~40 unità larghezza, ~30 altezza
+                // STESSA SCALA dei raycasts (0-1 normalizzato)
+                state.bossRelativeX = Mathf.Clamp(dx / 40.0f, -1.0f, 1.0f);
+                state.bossRelativeY = Mathf.Clamp(dy / 30.0f, -1.0f, 1.0f);
 
                 bool facingBoss = (dx > 0 && hero.cState.facingRight) || (dx < 0 && !hero.cState.facingRight);
                 state.isFacingBoss = facingBoss;
@@ -271,8 +267,7 @@ namespace SyntheticSoulMod
                 state.bossDefeated = false;
             }
 
-            // TRACKING MANTIS LORDS (OTTIMIZZATO)
-            // TRACKING MANTIS LORDS (FIXED)
+            // TRACKING MANTIS LORDS
             string[] mantisLordNames = new string[]
             {
                 "Mantis Lord",      // Prima (Mantis Lord centrale)
@@ -297,7 +292,6 @@ namespace SyntheticSoulMod
 
             state.mantisLordsKilled = killedCount;
 
-
             // LOGGA SOLO QUANDO IL NUMERO CAMBIA
             if (killedCount != prevMantisLordsKilled)
             {
@@ -313,19 +307,13 @@ namespace SyntheticSoulMod
         {
             string[] bossNames = new string[]
             {
-                "Hornet Boss", "Hornet",
-                "Mantis Lord",
-                "False Knight",
-                "Mawlek Body",
-                "Mega Zombie Beam Miner (1)", "Zombie Beam Miner Rematch",
-                "Mage Knight", "Dream Mage",
-                "Ghost Warrior Hu", "Ghost Warrior Galien", "Ghost Warrior Marmu",
-                "Ghost Warrior Xero", "Ghost Warrior Markoth", "Ghost Warrior No Eyes", "Ghost Warrior Gorb",
-                "Jar Collector",
-                "Dung Defender", "White Defender",
-                "Lost Kin", "Infected Knight",
-                "Mantis Traitor Lord",
-                "Hive Knight"
+                "Hornet Boss", "Hornet", "Mantis Lord", "False Knight",
+                "Mawlek Body", "Mega Zombie Beam Miner (1)", "Zombie Beam Miner Rematch",
+                "Mage Knight", "Dream Mage", "Ghost Warrior Hu", "Ghost Warrior Galien",
+                "Ghost Warrior Marmu", "Ghost Warrior Xero", "Ghost Warrior Markoth",
+                "Ghost Warrior No Eyes", "Ghost Warrior Gorb", "Jar Collector",
+                "Dung Defender", "White Defender", "Lost Kin", "Infected Knight",
+                "Mantis Traitor Lord", "Hive Knight"
             };
 
             foreach (string name in bossNames)
@@ -348,7 +336,6 @@ namespace SyntheticSoulMod
                 if (hm.hp > 50 && hm.gameObject.activeInHierarchy)
                 {
                     string name = hm.gameObject.name.ToLower();
-
                     // Escludi il giocatore
                     if (name.Contains("knight") || name.Contains("hollow"))
                         continue;
@@ -380,19 +367,20 @@ namespace SyntheticSoulMod
                 if (obj == null || !obj.activeInHierarchy) continue;
 
                 string name = obj.name.ToLower();
-
                 // Rileva boomerang mantidi
                 if (name.Contains("javelin") || name.Contains("boomerang") ||
                     name.Contains("scythe") || name.Contains("mantis") || name.Contains("shot"))
                 {
                     float distance = Vector2.Distance(playerPos, obj.transform.position);
-                    if (distance < HAZARD_DETECTION_RADIUS)
+                    if (distance <= HAZARD_DETECTION_RADIUS)
                     {
-                        var hazard = new HazardInfo();
-                        hazard.type = "boomerang";
-                        hazard.relX = obj.transform.position.x - playerPos.x;
-                        hazard.relY = obj.transform.position.y - playerPos.y;
-                        hazard.distance = distance;
+                        var hazard = new HazardInfo
+                        {
+                            type = "boomerang",
+                            relX = obj.transform.position.x - playerPos.x,
+                            relY = obj.transform.position.y - playerPos.y,
+                            distance = distance
+                        };
 
                         var rb = obj.GetComponent<Rigidbody2D>();
                         if (rb != null)
@@ -402,7 +390,6 @@ namespace SyntheticSoulMod
                         }
 
                         hazards.Add(hazard);
-                        DesktopLogger.Log($"[Hazard] Boomerang detected: {obj.name} at ({hazard.relX:F1}, {hazard.relY:F1})");
                     }
                 }
             }
@@ -419,13 +406,15 @@ namespace SyntheticSoulMod
                         if (proj != null && proj.activeInHierarchy)
                         {
                             float distance = Vector2.Distance(playerPos, proj.transform.position);
-                            if (distance < HAZARD_DETECTION_RADIUS)
+                            if (distance <= HAZARD_DETECTION_RADIUS)
                             {
-                                var hazard = new HazardInfo();
-                                hazard.type = "projectile";
-                                hazard.relX = proj.transform.position.x - playerPos.x;
-                                hazard.relY = proj.transform.position.y - playerPos.y;
-                                hazard.distance = distance;
+                                var hazard = new HazardInfo
+                                {
+                                    type = "projectile",
+                                    relX = proj.transform.position.x - playerPos.x,
+                                    relY = proj.transform.position.y - playerPos.y,
+                                    distance = distance
+                                };
 
                                 var rb = proj.GetComponent<Rigidbody2D>();
                                 if (rb != null)
@@ -445,14 +434,9 @@ namespace SyntheticSoulMod
             // 3. SPIKE WALLS E HAZARDS STATICI
             Vector2[] spikeDirections = new Vector2[]
             {
-                Vector2.down,
-                Vector2.up,
-                Vector2.left,
-                Vector2.right,
-                new Vector2(-1, -1).normalized,
-                new Vector2(1, -1).normalized,
-                new Vector2(-1, 1).normalized,
-                new Vector2(1, 1).normalized
+                Vector2.down, Vector2.up, Vector2.left, Vector2.right,
+                new Vector2(-1, -1).normalized, new Vector2(1, -1).normalized,
+                new Vector2(-1, 1).normalized, new Vector2(1, 1).normalized
             };
 
             foreach (var dir in spikeDirections)
@@ -461,21 +445,22 @@ namespace SyntheticSoulMod
                 if (hit.collider != null)
                 {
                     string hitName = hit.collider.gameObject.name.ToLower();
-                    bool isSpike = hitName.Contains("spike") || hitName.Contains("thorn") || hitName.Contains("hazard") ||
+                    bool isSpike = hitName.Contains("spike") || hitName.Contains("thorn") ||
+                                   hitName.Contains("hazard") ||
                                    hit.collider.gameObject.layer == LayerMask.NameToLayer("Hazards");
 
                     if (isSpike && hit.distance < 10f)
                     {
-                        var hazard = new HazardInfo();
-                        hazard.type = "spikes";
-                        hazard.relX = hit.point.x - playerPos.x;
-                        hazard.relY = hit.point.y - playerPos.y;
-                        hazard.distance = hit.distance;
-                        hazard.velocityX = 0;
-                        hazard.velocityY = 0;
-
+                        var hazard = new HazardInfo
+                        {
+                            type = "spikes",
+                            relX = hit.point.x - playerPos.x,
+                            relY = hit.point.y - playerPos.y,
+                            distance = hit.distance,
+                            velocityX = 0,
+                            velocityY = 0
+                        };
                         hazards.Add(hazard);
-                        DesktopLogger.Log($"[Hazard] Spikes detected at distance {hit.distance:F1} in direction ({dir.x:F1}, {dir.y:F1})");
                     }
                 }
             }
@@ -487,13 +472,15 @@ namespace SyntheticSoulMod
                 if (hm.hp > 0 && hm.hp < 50 && hm.gameObject.activeInHierarchy)
                 {
                     float distance = Vector2.Distance(playerPos, hm.transform.position);
-                    if (distance < HAZARD_DETECTION_RADIUS)
+                    if (distance <= HAZARD_DETECTION_RADIUS)
                     {
-                        var hazard = new HazardInfo();
-                        hazard.type = "enemy";
-                        hazard.relX = hm.transform.position.x - playerPos.x;
-                        hazard.relY = hm.transform.position.y - playerPos.y;
-                        hazard.distance = distance;
+                        var hazard = new HazardInfo
+                        {
+                            type = "enemy",
+                            relX = hm.transform.position.x - playerPos.x,
+                            relY = hm.transform.position.y - playerPos.y,
+                            distance = distance
+                        };
 
                         var rb = hm.GetComponent<Rigidbody2D>();
                         if (rb != null)
@@ -523,7 +510,6 @@ namespace SyntheticSoulMod
         private GameState GetDefaultState()
         {
             var state = new GameState();
-
             state.playerX = 0f;
             state.playerY = 0f;
             state.playerVelocityX = 0f;
@@ -539,7 +525,9 @@ namespace SyntheticSoulMod
             state.damageTaken = 0;
 
             for (int i = 0; i < 5; i++)
+            {
                 state.terrainInfo[i] = 1.0f;
+            }
 
             state.bossX = 0f;
             state.bossY = 0f;

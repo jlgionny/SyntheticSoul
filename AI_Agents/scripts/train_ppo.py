@@ -1,6 +1,6 @@
 """
-PPO Training Script for Hollow Knight Mantis Lords Boss Fight.
-Optimized with aggressive reward shaping and curriculum learning.
+PPO Training Script - MINIMAL STATE (18 features).
+Debugging wall-banging behavior.
 """
 
 import os
@@ -19,59 +19,46 @@ from src.env.hollow_knight_env import HollowKnightEnv
 
 def preprocess_state(state_dict: dict) -> np.ndarray:
     """
-    Convert raw state dict to 37-dimensional feature vector.
-    NO absolute coordinates - only relative positions and velocities.
+    MINIMAL STATE (18 features) - HKRL style.
+    REMOVE: Absolute positions, velocities, complex hazards, zone deviation.
+    KEEP: Only what matters for combat.
     """
     features = []
 
-    # Player features (8)
-    features.append(state_dict.get("playerVelocityX", 0.0) / 10.0)
-    features.append(state_dict.get("playerVelocityY", 0.0) / 10.0)
+    # Player basics (4) - NO velocity, just status
     features.append(state_dict.get("playerHealth", 0) / 10.0)
-    features.append(state_dict.get("playerSoul", 0) / 100.0)
     features.append(float(state_dict.get("canDash", False)))
     features.append(float(state_dict.get("canAttack", False)))
     features.append(float(state_dict.get("isGrounded", False)))
-    features.append(float(state_dict.get("hasDoubleJump", False)))
 
-    # Terrain raycast info (5)
+    # Terrain (5) - raycasts only
     terrain_info = state_dict.get("terrainInfo", [1.0] * 5)
     if len(terrain_info) < 5:
         terrain_info = list(terrain_info) + [1.0] * (5 - len(terrain_info))
     features.extend(terrain_info[:5])
 
-    # Boss features - RELATIVE COORDINATES (6)
-    player_x = state_dict.get("playerX", 0.0)
-    player_y = state_dict.get("playerY", 0.0)
-    boss_x = state_dict.get("bossX", 0.0)
-    boss_y = state_dict.get("bossY", 0.0)
+    # Boss (4) - SOLO direzione e distanza
+    boss_rel_x = state_dict.get("bossRelativeX", 0.0)
+    boss_rel_y = state_dict.get("bossRelativeY", 0.0)
+    distance = state_dict.get("distanceToBoss", 50.0) / 50.0
+    facing_boss = float(state_dict.get("isFacingBoss", False))
 
-    boss_rel_x = (boss_x - player_x) / 40.0
-    boss_rel_y = (boss_y - player_y) / 30.0
+    features.append(boss_rel_x)
+    features.append(boss_rel_y)
+    features.append(np.clip(distance, 0.0, 1.0))
+    features.append(facing_boss)
 
-    features.append(np.clip(boss_rel_x, -1.0, 1.0))
-    features.append(np.clip(boss_rel_y, -1.0, 1.0))
-    features.append(state_dict.get("bossHealth", 0) / 1000.0)
-    features.append(np.clip(state_dict.get("distanceToBoss", 50.0) / 50.0, 0.0, 1.0))
-    features.append(float(state_dict.get("isFacingBoss", False)))
-
-    # Zone deviation (1) - distance from optimal combat range
-    optimal_range = 5.0
-    distance = state_dict.get("distanceToBoss", 100.0)
-    zone_deviation = abs(distance - optimal_range) / 20.0
-    features.append(np.clip(zone_deviation, 0.0, 1.0))
-
-    # Hazards (18): 6 hazards × 3 features (relX, relY, velX)
+    # Hazards (5) - SOLO il più vicino
     hazards = state_dict.get("nearbyHazards", [])
-    for i in range(6):
-        if i < len(hazards):
-            h = hazards[i]
-            rel_x = np.clip(h.get("relX", 0.0) / 15.0, -1.0, 1.0)
-            rel_y = np.clip(h.get("relY", 0.0) / 15.0, -1.0, 1.0)
-            vel_x = np.clip(h.get("velocityX", 0.0) / 20.0, -1.0, 1.0)
-            features.extend([rel_x, rel_y, vel_x])
-        else:
-            features.extend([0.0, 0.0, 0.0])
+    if len(hazards) > 0:
+        h = hazards[0]  # Solo il più pericoloso
+        features.append(np.clip(h.get("relX", 0.0) / 15.0, -1.0, 1.0))
+        features.append(np.clip(h.get("relY", 0.0) / 15.0, -1.0, 1.0))
+        features.append(np.clip(h.get("velocityX", 0.0) / 20.0, -1.0, 1.0))
+        features.append(np.clip(h.get("velocityY", 0.0) / 20.0, -1.0, 1.0))
+        features.append(np.clip(h.get("distance", 15.0) / 15.0, 0.0, 1.0))
+    else:
+        features.extend([0.0, 0.0, 0.0, 0.0, 1.0])
 
     return np.array(features, dtype=np.float32)
 
@@ -79,17 +66,17 @@ def preprocess_state(state_dict: dict) -> np.ndarray:
 def train_ppo(
     num_episodes: int = 1000,
     max_steps: int = 6000,
-    update_interval: int = 512,  # RIDOTTO da 800 - update più frequenti
-    learning_rate: float = 3e-5,  # RIDOTTO da 5e-5 - learning più stabile
-    gamma: float = 0.995,  # AUMENTATO da 0.99 - più valore a reward futuri
-    entropy_coef_start: float = 0.20,  # AUMENTATO - esplorazione aggressiva
-    entropy_coef_end: float = 0.08,  # NUOVO - decadimento curriculum
+    update_interval: int = 2048,
+    learning_rate: float = 5e-4,
+    gamma: float = 0.98,
+    entropy_coef_start: float = 0.50,
+    entropy_coef_end: float = 0.15,
     save_freq: int = 25,
-    checkpoint_dir: str = "checkpoints_ppo_optimized",
+    checkpoint_dir: str = "checkpoints_ppo_minimal",
     host: str = "localhost",
     port: int = 5555,
 ):
-    """Train PPO agent on Mantis Lords with curriculum learning."""
+    """Train PPO agent with minimal state and maximum exploration."""
 
     # Setup directories
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -99,17 +86,15 @@ def train_ppo(
     print("=" * 60)
     print(f"PPO Training - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
-    print("OPTIMIZATIONS:")
-    print("  ✓ Damage reward: 40 → 200 (+400%)")
-    print("  ✓ Kill reward: 400 → 1000 (+150%)")
-    print("  ✓ Attack reward: 8 → 15 (+87%)")
-    print("  ✓ Survival reward: +0.1 per step (NEW)")
-    print("  ✓ Progressive death penalty (100/50/20)")
-    print("  ✓ Entropy curriculum: 0.20 → 0.08")
-    print("  ✓ Update interval: 800 → 512")
+    print("CONFIGURATION:")
+    print("  ✓ State: MINIMAL (18 features)")
+    print("  ✓ LSTM: DISABLED (for debugging)")
+    print("  ✓ Entropy: 0.50 → 0.15 (max exploration)")
+    print("  ✓ Random actions: 50% for first 100 episodes")
+    print("  ✓ Wall penalty: -0.5 when stuck")
     print("=" * 60)
 
-    # Initialize environment with reward shaping
+    # Initialize environment with minimal reward shaping
     env = HollowKnightEnv(host=host, port=port, use_reward_shaping=True)
     initial_state = env.reset()
     state_array = preprocess_state(initial_state)
@@ -118,47 +103,29 @@ def train_ppo(
 
     print(f"[PPO] State size: {state_size}, Action size: {action_size}")
 
-    # Initialize agent with high initial entropy
+    # Initialize agent WITHOUT LSTM for debugging
     agent = PPOAgent(
         state_size=state_size,
         action_size=action_size,
         learning_rate=learning_rate,
         gamma=gamma,
         entropy_coef=entropy_coef_start,
-        use_lstm=True,
+        use_lstm=False,  # DISABLED for debugging
     )
-
-    # Load checkpoint if exists
-    latest_checkpoint = os.path.join(checkpoint_dir_full, "latest_ppo.pth")
-    start_episode = 0
-    if os.path.exists(latest_checkpoint):
-        try:
-            agent.load(latest_checkpoint)
-            # Try to read episode number from log
-            logfile = os.path.join(checkpoint_dir_full, "training_log.txt")
-            if os.path.exists(logfile):
-                with open(logfile, "r") as f:
-                    lines = f.readlines()
-                    if len(lines) > 1:
-                        last_line = lines[-1].strip().split(",")
-                        start_episode = int(last_line[0])
-            print(f"[PPO] Resumed from episode {start_episode}")
-        except Exception as e:
-            print(f"[PPO] Could not load checkpoint: {e}")
 
     # Training logs
     logfile = os.path.join(checkpoint_dir_full, "training_log.txt")
     if not os.path.exists(logfile):
         with open(logfile, "w") as f:
             f.write(
-                "episode,total_reward,steps,damage_dealt,boss_hits,mantis_killed,steps_survived,actor_loss,critic_loss,entropy\n"
+                "episode,total_reward,steps,boss_hp,player_hp,mantis_killed,wall_violations,actor_loss,critic_loss,entropy\n"
             )
 
     best_reward = -float("inf")
     episode_rewards = []
 
     # Training loop
-    for episode in range(start_episode, num_episodes):
+    for episode in range(num_episodes):
         # CURRICULUM LEARNING - Decadimento entropy
         progress = episode / num_episodes
         current_entropy = (
@@ -176,18 +143,33 @@ def train_ppo(
         critic_loss_sum = 0.0
         entropy_sum = 0.0
         num_updates = 0
+        wall_violations = 0
 
         print(f"\n{'='*60}")
         print(f"[Episode {episode + 1}/{num_episodes}] Entropy: {current_entropy:.3f}")
+        if episode < 100:
+            print("  [EXPLORATION MODE] 50% random actions")
         print(f"{'='*60}")
 
         for step in range(max_steps):
-            # Select action
-            action, log_prob, value = agent.select_action(state)
+            # EXPLORATION: Random actions for first 100 episodes
+            if episode < 100 and np.random.random() < 0.5:
+                action = np.random.randint(0, action_size)
+                log_prob = 0.0
+                value = 0.0
+            else:
+                action, log_prob, value = agent.select_action(state)
 
             # Execute action
             next_state_dict, reward, done, info = env.step(action)
             next_state = preprocess_state(next_state_dict)
+
+            # Track wall violations
+            terrain = next_state_dict.get("terrainInfo", [1.0] * 5)
+            wall_ahead = terrain[2] if len(terrain) > 2 else 1.0
+            distance_to_boss = next_state_dict.get("distanceToBoss", 100.0)
+            if wall_ahead < 0.2 and distance_to_boss > 15.0:
+                wall_violations += 1
 
             # Store transition
             agent.store_transition(state, action, log_prob, value, reward, done)
@@ -206,21 +188,24 @@ def train_ppo(
                     entropy_sum += metrics["entropy"]
                     num_updates += 1
 
-            # Log progress
+            # DEBUG LOG - Detailed state info
             if step % 200 == 0 and step > 0:
+                boss_x = next_state_dict.get("bossRelativeX", 0)
+                boss_y = next_state_dict.get("bossRelativeY", 0)
                 dist = next_state_dict.get("distanceToBoss", 0)
-                hits = info.get("total_boss_hits", 0)
-                damage = info.get("total_damage_dealt", 0)
+                boss_hp = info.get("boss_damage", 0)
+                player_hp = info.get("player_hp", 0)
+                action_name = env.ACTIONS.get(action, "UNKNOWN")
+
+                print(f"\n  Step {step}: R={episode_reward:.1f}")
                 print(
-                    f"  Step {step}: R={episode_reward:.1f}, D={dist:.1f}, Hits={hits}, Dmg={damage:.1f}"
+                    f"    Boss: X={boss_x:.2f}, Y={boss_y:.2f}, Dist={dist:.1f}, HP={boss_hp:.0f}"
                 )
+                print(f"    Player: HP={player_hp}, Action={action_name}")
+                print(f"    Terrain: Wall={wall_ahead:.2f} (0=close, 1=far)")
+                print(f"    Wall violations: {wall_violations}")
 
             if done:
-                if info.get("death"):
-                    survived = info.get("steps_survived", 0)
-                    print(f"  [End] Player died (survived {survived} steps)")
-                elif info.get("victory"):
-                    print("  [End] 🎉 VICTORY!")
                 break
 
         # Final policy update
@@ -250,10 +235,11 @@ def train_ppo(
         print(f"[Episode {episode + 1}] SUMMARY")
         print(f"{'='*60}")
         print(f"  Reward: {episode_reward:.2f} | Avg (50): {avg_reward_50:.2f}")
-        print(f"  Steps: {episode_steps} | Survived: {info.get('steps_survived', 0)}")
-        print(f"  Damage Dealt: {info.get('total_damage_dealt', 0):.1f}")
-        print(f"  Boss Hits: {info.get('total_boss_hits', 0)}")
+        print(f"  Steps: {episode_steps}")
+        print(f"  Boss HP: {info.get('boss_damage', 0):.0f}")
+        print(f"  Player HP: {info.get('player_hp', 0)}")
         print(f"  Mantis Killed: {next_state_dict.get('mantisLordsKilled', 0)}/3")
+        print(f"  Wall Violations: {wall_violations}")
         print(f"  Loss: Actor={avg_actor_loss:.4f}, Critic={avg_critic_loss:.4f}")
         print(f"  Entropy: {avg_entropy:.4f} (target={current_entropy:.3f})")
         print(f"{'='*60}")
@@ -262,9 +248,8 @@ def train_ppo(
         with open(logfile, "a") as f:
             f.write(
                 f"{episode + 1},{episode_reward:.2f},{episode_steps},"
-                f"{info.get('total_damage_dealt', 0):.1f},{info.get('total_boss_hits', 0)},"
-                f"{next_state_dict.get('mantisLordsKilled', 0)},"
-                f"{info.get('steps_survived', 0)},"
+                f"{info.get('boss_damage', 0):.0f},{info.get('player_hp', 0)},"
+                f"{next_state_dict.get('mantisLordsKilled', 0)},{wall_violations},"
                 f"{avg_actor_loss:.4f},{avg_critic_loss:.4f},{avg_entropy:.4f}\n"
             )
 
@@ -281,16 +266,7 @@ def train_ppo(
                 checkpoint_dir_full, f"episode_{episode + 1}.pth"
             )
             agent.save(checkpoint_path)
-            agent.save(latest_checkpoint)
             print("  💾 Checkpoint saved")
-
-        # Early stopping check
-        if len(episode_rewards) >= 100:
-            recent_avg = np.mean(episode_rewards[-100:])
-            if recent_avg > 500:  # Se media ultimi 100 > 500, sta imparando bene
-                print(
-                    f"\n✓ Strong performance detected (avg={recent_avg:.1f})! Training stabilized."
-                )
 
     # Training complete
     print("\n" + "=" * 60)
@@ -310,20 +286,20 @@ if __name__ == "__main__":
     HYPERPARAMS = {
         "num_episodes": 1000,
         "max_steps": 6000,
-        "update_interval": 512,
-        "learning_rate": 3e-5,
-        "gamma": 0.995,
-        "entropy_coef_start": 0.20,
-        "entropy_coef_end": 0.08,
+        "update_interval": 2048,
+        "learning_rate": 5e-4,
+        "gamma": 0.98,
+        "entropy_coef_start": 0.50,
+        "entropy_coef_end": 0.15,
         "save_freq": 25,
-        "checkpoint_dir": "checkpoints_ppo_optimized",
+        "checkpoint_dir": "checkpoints_ppo_minimal",
         "host": "localhost",
         "port": 5555,
     }
 
     print("=" * 60)
     print("PPO Training - Mantis Lords Boss Fight")
-    print("OPTIMIZED VERSION with Curriculum Learning")
+    print("MINIMAL STATE + MAX EXPLORATION")
     print("=" * 60)
     print("\nHyperparameters:")
     for key, value in HYPERPARAMS.items():
