@@ -3,6 +3,9 @@ numpy
 gymnasium
 shimmy
 tensorboard
+seaborn
+pandas
+matplotlib
 flake8
 autoflake
 black==25.12.0
