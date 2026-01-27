@@ -7,12 +7,12 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
+
 from src.agents.ppo_agent import PPOAgent
 from src.env.hollow_knight_env import HollowKnightEnv
 
+
 # ============ AUTO PLOT GENERATOR IMPORT ============
-
-
 def auto_generate_plots(
     log_file, checkpoint_dir, algorithm="PPO", window=20, current_episode=0
 ):
@@ -30,7 +30,6 @@ def auto_generate_plots(
         return
 
     script_path = os.path.join(os.path.dirname(__file__), "generate_plots.py")
-
     if not os.path.exists(script_path):
         print("[Auto Plot] Warning: Script generate_plots.py non trovato")
         return
@@ -58,7 +57,6 @@ def auto_generate_plots(
 
         if result.returncode == 0:
             print(f"[Auto Plot] ✓ Grafici generati in: {plots_dir}")
-
             # Info file
             info_path = os.path.join(plots_dir, "info.txt")
             with open(info_path, "w") as f:
@@ -68,12 +66,10 @@ def auto_generate_plots(
                 f.write(f"Episode: {current_episode}\n")
                 f.write(f"Smoothing Window: {window}\n")
                 f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-
         else:
             print("[Auto Plot] ✗ Errore durante generazione:")
             if result.stderr:
                 print(result.stderr[:500])
-
     except subprocess.TimeoutExpired:
         print("[Auto Plot] ✗ Timeout durante generazione grafici")
     except Exception as e:
@@ -94,16 +90,14 @@ class RewardCalculator:
         self.prev_boss_health = None
         self.prev_player_health = None
         self.prev_distance_to_boss = None
-        # Leggi il valore iniziale dall'environment invece di resettare a 0
-        if initial_state is not None:
-            self.prev_mantis_killed = initial_state.get("mantisLordsKilled", 0)
-        else:
-            self.prev_mantis_killed = 0
+        # FIX: Forza sempre a 0 invece di leggere dall'environment
+        self.prev_mantis_killed = 0
         self.episode_start_time = time.time()
 
     def calculate_reward(self, state_dict, prev_state, done, info=None):
         reward = 0.0
 
+        # Boss damage reward
         if (
             prev_state is not None
             and "bossHealth" in state_dict
@@ -113,6 +107,7 @@ class RewardCalculator:
             if boss_damage > 0:
                 reward += boss_damage * 3.0
 
+        # Distance-based reward
         curr_dist = state_dict.get("distanceToBoss", 100.0)
         if 5.0 <= curr_dist <= 8.0:
             reward += 0.2
@@ -121,6 +116,7 @@ class RewardCalculator:
         elif curr_dist > 12.0:
             reward -= 0.5
 
+        # Distance change reward
         if prev_state is not None and "distanceToBoss" in prev_state:
             prev_dist = prev_state["distanceToBoss"]
             distance_change = prev_dist - curr_dist
@@ -129,9 +125,9 @@ class RewardCalculator:
             elif prev_dist < 4.0 and distance_change < 0:
                 reward += abs(distance_change) * 0.1
 
+        # Wall/spike penalties
         terrain_info = state_dict.get("terrainInfo", [1.0, 1.0, 1.0, 1.0, 1.0])
         wall_distance = terrain_info[2] if len(terrain_info) >= 3 else 1.0
-
         if wall_distance < 0.1:
             reward -= 50.0
             print(f"  [CRITICAL] Wall collision imminent: -{50.0:.2f}")
@@ -141,6 +137,7 @@ class RewardCalculator:
         elif wall_distance < 0.3:
             reward -= 5.0
 
+        # Hazard penalties
         hazards = state_dict.get("nearbyHazards", [])
         for h in hazards:
             if h.get("type") == "spikes":
@@ -150,6 +147,7 @@ class RewardCalculator:
                     reward -= penalty
                     print(f"  [Spike Hazard] Distance {spike_dist:.2f}: -{penalty:.2f}")
 
+        # Dodge reward
         if hazards and prev_state is not None:
             active_projectiles = [
                 h for h in hazards if h.get("type") in ["boomerang", "projectile"]
@@ -163,7 +161,6 @@ class RewardCalculator:
                 proj_dist = (
                     closest_proj.get("relX", 0) ** 2 + closest_proj.get("relY", 0) ** 2
                 ) ** 0.5
-
                 if proj_dist < 3.0:
                     curr_health = state_dict.get("playerHealth", 0)
                     prev_health = prev_state.get("playerHealth", 0)
@@ -173,6 +170,7 @@ class RewardCalculator:
                         if info and info.get("action_name") == "DASH":
                             reward += 1.0
 
+        # Health loss penalty
         if (
             prev_state is not None
             and "playerHealth" in state_dict
@@ -183,6 +181,7 @@ class RewardCalculator:
                 reward -= health_loss * 25.0
                 print(f"  [Reward] Health lost: -{health_loss * 25.0:.2f}")
 
+        # Mantis Lords kill reward
         mantis_killed = state_dict.get("mantisLordsKilled", 0)
         if mantis_killed > self.prev_mantis_killed:
             new_kills = mantis_killed - self.prev_mantis_killed
@@ -191,11 +190,12 @@ class RewardCalculator:
             print(
                 f"  [MANTIS LORD KILLED] +{new_kills} defeated: +{mantis_bonus:.2f} (Total: {mantis_killed}/3)"
             )
-
         self.prev_mantis_killed = mantis_killed
 
+        # Time penalty
         reward -= 0.005
 
+        # Terminal rewards/penalties
         if done:
             if state_dict.get("isDead", False):
                 reward -= 150.0
@@ -206,10 +206,12 @@ class RewardCalculator:
                 reward += total_victory
                 print(f"  [Reward] Boss defeated: +{total_victory:.2f}")
 
+        # Airborne penalty
         floor_distance = terrain_info[0] if len(terrain_info) >= 1 else 1.0
         if not state_dict.get("isGrounded", True) and floor_distance > 0.6:
             reward -= 3.0
 
+        # Facing boss reward
         if state_dict.get("isFacingBoss", False) and curr_dist < 10.0:
             reward += 0.05
 
@@ -220,6 +222,7 @@ def preprocess_state(state_dict):
     """State size: 39 features"""
     features = []
 
+    # Player features (10)
     features.append(state_dict.get("playerX", 0.0))
     features.append(state_dict.get("playerY", 0.0))
     features.append(state_dict.get("playerVelocityX", 0.0))
@@ -231,11 +234,13 @@ def preprocess_state(state_dict):
     features.append(float(state_dict.get("isGrounded", False)))
     features.append(float(state_dict.get("hasDoubleJump", False)))
 
+    # Terrain info (5)
     terrain_info = state_dict.get("terrainInfo", [1.0, 1.0, 1.0, 1.0, 1.0])
     if len(terrain_info) < 5:
         terrain_info = list(terrain_info) + [1.0] * (5 - len(terrain_info))
     features.extend(terrain_info[:5])
 
+    # Boss features (6)
     features.append(state_dict.get("bossX", 0.0))
     features.append(state_dict.get("bossY", 0.0))
     features.append(state_dict.get("bossHealth", 0) / 1000.0)
@@ -247,6 +252,7 @@ def preprocess_state(state_dict):
     zone_deviation = abs(dist - optimal_zone) / 20.0
     features.append(zone_deviation)
 
+    # Hazards (18 = 6 hazards × 3 features)
     hazards = state_dict.get("nearbyHazards", [])
     for i in range(6):
         if i < len(hazards):
@@ -321,7 +327,6 @@ def train_ppo(
     global_step = 0
 
     log_file = os.path.join(checkpoint_dir_full, "training_log.txt")
-
     if not os.path.exists(log_file):
         with open(log_file, "w") as f:
             f.write("episode,total_reward,steps,global_step,mantis_killed\n")
@@ -380,8 +385,10 @@ def train_ppo(
                 break
 
         episode_rewards.append(episode_reward)
+
         # Usa il valore tracciato dalla RewardCalculator invece di state_dict
         mantis_killed = reward_calc.prev_mantis_killed
+
         print(f"\n[Episode {episode + 1}] Summary:")
         print(f"  Total Reward: {episode_reward:.2f}")
         print(f"  Steps in Episode: {step + 1}")
@@ -458,10 +465,10 @@ if __name__ == "__main__":
     print("  ✓ Mantis Lords progress tracking")
     print("\nStructure:")
     print("  plots_ppo/")
-    print("  ├── episode_100/")
-    print("  ├── episode_200/")
-    print("  ├── ...")
-    print("  └── episode_1000_final/")
+    print("    ├── episode_100/")
+    print("    ├── episode_200/")
+    print("    ├── ...")
+    print("    └── episode_1000_final/")
     print("\nHyperparameters:")
     for key, value in HYPERPARAMS.items():
         print(f"  {key}: {value}")

@@ -196,6 +196,8 @@ namespace SyntheticSoulMod
             mantisLordsKilled = 0;
             killedMantisIds.Clear();
 
+            stateExtractor?.ResetTracking();
+
             DesktopLogger.Log($"[Scene] Entered: {currentScene} (from: {from.name})");
 
             if (currentScene.StartsWith("GG_") || IsBossScene(currentScene))

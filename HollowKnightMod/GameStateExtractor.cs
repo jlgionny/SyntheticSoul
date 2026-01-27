@@ -12,7 +12,7 @@ namespace SyntheticSoulMod
     [Serializable]
     public class GameState
     {
-        // ============ PLAYER STATE ============
+        // PLAYER STATE
         public float playerX;
         public float playerY;
         public float playerVelocityX;
@@ -26,18 +26,18 @@ namespace SyntheticSoulMod
         public bool isDead;
         public bool facingRight;
 
-        // ============ DAMAGE ACCUMULATOR ============
+        // DAMAGE ACCUMULATOR
         public int damageTaken;
 
-        // ============ TERRAIN INFO ============
-        // [0] = Floor Distance (sotto)
-        // [1] = Gap Ahead (avanti-basso)
-        // [2] = Wall Ahead (avanti)
-        // [3] = Ceiling Ahead (avanti-alto)
-        // [4] = Ceiling Distance (sopra)
+        // TERRAIN INFO
+        // 0: Floor Distance (sotto)
+        // 1: Gap Ahead (avanti-basso)
+        // 2: Wall Ahead (avanti)
+        // 3: Ceiling Ahead (avanti-alto)
+        // 4: Ceiling Distance (sopra)
         public float[] terrainInfo;
 
-        // ============ BOSS STATE (ENHANCED) ============
+        // BOSS STATE (ENHANCED)
         public float bossX;
         public float bossY;
         public float bossHealth;
@@ -47,10 +47,10 @@ namespace SyntheticSoulMod
         public bool isFacingBoss;
         public bool bossDefeated;
 
-        // ============ MANTIS LORDS TRACKING ============
+        // MANTIS LORDS TRACKING
         public int mantisLordsKilled;
 
-        // ============ HAZARDS (Projectiles, Enemies, Spikes) ============
+        // HAZARDS (Projectiles, Enemies, Spikes)
         public List<HazardInfo> nearbyHazards;
 
         public GameState()
@@ -86,7 +86,7 @@ namespace SyntheticSoulMod
         private LayerMask enemyLayer;
         private LayerMask hazardLayer; // Include sia Terrain che Hazards
 
-        // NUOVO: Traccia il numero di Mantis Lords uccise per loggare solo i cambiamenti
+        // NUOVO: Traccia il numero di Mantis Lords uccise (per loggare solo i cambiamenti)
         private int prevMantisLordsKilled = 0;
 
         public GameStateExtractor()
@@ -94,7 +94,17 @@ namespace SyntheticSoulMod
             terrainLayer = LayerMask.GetMask("Terrain");
             enemyLayer = LayerMask.GetMask("Enemies");
             hazardLayer = LayerMask.GetMask("Terrain", "Hazards");
+
             DesktopLogger.Log($"[Extractor] Initialized with layers - Terrain: {terrainLayer.value}, Hazards: {hazardLayer.value}");
+        }
+
+        /// <summary>
+        /// NUOVO: Resetta il tracking per un nuovo episodio.
+        /// </summary>
+        public void ResetTracking()
+        {
+            prevMantisLordsKilled = 0;
+            DesktopLogger.Log("[Extractor] Mantis Lords tracking reset");
         }
 
         /// <summary>
@@ -111,16 +121,16 @@ namespace SyntheticSoulMod
                 return GetDefaultState();
             }
 
-            // ============ PLAYER STATE ============
+            // PLAYER STATE
             ExtractPlayerState(hero, state);
 
-            // ============ TERRAIN INFO (with Hazards/Spikes) ============
+            // TERRAIN INFO (with Hazards/Spikes)
             ExtractTerrainInfo(hero, state);
 
-            // ============ BOSS STATE (ENHANCED) ============
+            // BOSS STATE (ENHANCED)
             ExtractBossState(hero, state);
 
-            // ============ HAZARDS (Projectiles, Boomerangs, Spikes) ============
+            // HAZARDS (Projectiles, Boomerangs, Spikes)
             ExtractHazards(hero, state);
 
             return state;
@@ -151,16 +161,8 @@ namespace SyntheticSoulMod
                 state.hasDoubleJump = pd.hasDoubleJump;
             }
 
-            state.canDash = !hero.cState.dashing &&
-                           !hero.cState.backDashing &&
-                           !hero.cState.shadowDashing &&
-                           !hero.cState.dashCooldown;
-
-            state.canAttack = !hero.cState.attacking &&
-                             !hero.cState.recoiling &&
-                             !hero.cState.dead &&
-                             !hero.cState.hazardRespawning;
-
+            state.canDash = !hero.cState.dashing && !hero.cState.backDashing && !hero.cState.shadowDashing && !hero.cState.dashCooldown;
+            state.canAttack = !hero.cState.attacking && !hero.cState.recoiling && !hero.cState.dead && !hero.cState.hazardRespawning;
             state.isGrounded = hero.cState.onGround;
             state.isDead = hero.cState.dead;
             state.facingRight = hero.cState.facingRight;
@@ -175,25 +177,25 @@ namespace SyntheticSoulMod
             bool facingRight = hero.cState.facingRight;
             float direction = facingRight ? 1f : -1f;
 
-            // [0] Floor Distance (sotto) - usa hazardLayer per rilevare anche spikes
+            // 0: Floor Distance (sotto) - usa hazardLayer per rilevare anche spikes
             state.terrainInfo[0] = RaycastDistance(pos, Vector2.down, RAYCAST_DISTANCE, hazardLayer);
 
-            // [1] Gap Ahead (avanti-basso, diagonale 45°)
+            // 1: Gap Ahead (avanti-basso, diagonale 45°)
             Vector2 gapDir = new Vector2(direction, -1f).normalized;
             state.terrainInfo[1] = RaycastDistance(pos, gapDir, RAYCAST_DISTANCE, hazardLayer);
 
-            // [2] Wall Ahead (avanti, orizzontale) - include spike walls
+            // 2: Wall Ahead (avanti, orizzontale) - include spike walls
             Vector2 wallDir = new Vector2(direction, 0f);
             state.terrainInfo[2] = RaycastDistance(pos, wallDir, RAYCAST_DISTANCE, hazardLayer);
 
-            // [3] Ceiling Ahead (avanti-alto, diagonale 45°)
+            // 3: Ceiling Ahead (avanti-alto, diagonale 45°)
             Vector2 ceilingAheadDir = new Vector2(direction, 1f).normalized;
             state.terrainInfo[3] = RaycastDistance(pos, ceilingAheadDir, RAYCAST_DISTANCE, hazardLayer);
 
-            // [4] Ceiling Distance (sopra)
+            // 4: Ceiling Distance (sopra)
             state.terrainInfo[4] = RaycastDistance(pos, Vector2.up, RAYCAST_DISTANCE, hazardLayer);
 
-            // Normalizza distanze: 0 = molto vicino, 1 = molto lontano
+            // Normalizza distanze (0 = molto vicino, 1 = molto lontano)
             for (int i = 0; i < state.terrainInfo.Length; i++)
             {
                 state.terrainInfo[i] = Mathf.Clamp01(state.terrainInfo[i] / RAYCAST_DISTANCE);
@@ -231,6 +233,7 @@ namespace SyntheticSoulMod
                 float dx = bossPos.x - playerPos.x;
                 float dy = bossPos.y - playerPos.y;
                 state.distanceToBoss = Mathf.Sqrt(dx * dx + dy * dy);
+
                 state.bossRelativeX = dx / 20.0f;
                 state.bossRelativeY = dy / 20.0f;
 
@@ -261,10 +264,11 @@ namespace SyntheticSoulMod
                 state.bossDefeated = false;
             }
 
-            // ============ TRACKING MANTIS LORDS (OTTIMIZZATO) ============
+            // TRACKING MANTIS LORDS (OTTIMIZZATO)
+            // TRACKING MANTIS LORDS (FIXED)
             string[] mantisLordNames = new string[]
             {
-                "Mantis Lord",      // Prima Mantis Lord (centrale)
+                "Mantis Lord",      // Prima (Mantis Lord centrale)
                 "Mantis Lord S1",   // Seconda (sinistra)
                 "Mantis Lord S2"    // Terza (destra)
             };
@@ -276,20 +280,16 @@ namespace SyntheticSoulMod
                 if (lord != null)
                 {
                     var hm = lord.GetComponent<HealthManager>();
-                    // Se non ha HealthManager o hp <= 0, è morta
-                    if (hm == null || hm.hp <= 0)
+                    // Conta come uccisa SOLO se esiste ed è morta (hp <= 0)
+                    if (hm != null && hm.hp <= 0)
                     {
                         killedCount++;
                     }
                 }
-                else
-                {
-                    // GameObject non esiste = distrutto (ucciso)
-                    killedCount++;
-                }
             }
 
             state.mantisLordsKilled = killedCount;
+
 
             // LOGGA SOLO QUANDO IL NUMERO CAMBIA
             if (killedCount != prevMantisLordsKilled)
@@ -306,27 +306,17 @@ namespace SyntheticSoulMod
         {
             string[] bossNames = new string[]
             {
-                "Hornet Boss",
-                "Hornet",
+                "Hornet Boss", "Hornet",
                 "Mantis Lord",
                 "False Knight",
                 "Mawlek Body",
-                "Mega Zombie Beam Miner (1)",
-                "Zombie Beam Miner Rematch",
-                "Mage Knight",
-                "Dream Mage",
-                "Ghost Warrior Hu",
-                "Ghost Warrior Galien",
-                "Ghost Warrior Marmu",
-                "Ghost Warrior Xero",
-                "Ghost Warrior Markoth",
-                "Ghost Warrior No Eyes",
-                "Ghost Warrior Gorb",
+                "Mega Zombie Beam Miner (1)", "Zombie Beam Miner Rematch",
+                "Mage Knight", "Dream Mage",
+                "Ghost Warrior Hu", "Ghost Warrior Galien", "Ghost Warrior Marmu",
+                "Ghost Warrior Xero", "Ghost Warrior Markoth", "Ghost Warrior No Eyes", "Ghost Warrior Gorb",
                 "Jar Collector",
-                "Dung Defender",
-                "White Defender",
-                "Lost Kin",
-                "Infected Knight",
+                "Dung Defender", "White Defender",
+                "Lost Kin", "Infected Knight",
                 "Mantis Traitor Lord",
                 "Hive Knight"
             };
@@ -353,15 +343,11 @@ namespace SyntheticSoulMod
                     string name = hm.gameObject.name.ToLower();
 
                     // Escludi il giocatore
-                    if (name.Contains("knight") && name.Contains("hollow"))
+                    if (name.Contains("knight") || name.Contains("hollow"))
                         continue;
 
-                    if (name.Contains("boss") ||
-                        name.Contains("hornet") ||
-                        name.Contains("mantis") ||
-                        name.Contains("mage") ||
-                        name.Contains("ghost") ||
-                        name.Contains("defender") ||
+                    if (name.Contains("boss") || name.Contains("hornet") || name.Contains("mantis") ||
+                        name.Contains("mage") || name.Contains("ghost") || name.Contains("defender") ||
                         name.Contains("traitor"))
                     {
                         return hm.gameObject;
@@ -373,14 +359,14 @@ namespace SyntheticSoulMod
         }
 
         /// <summary>
-        /// Estrae informazioni sui pericoli: proiettili (boomerang mantidi), nemici, spike walls.
+        /// Estrae informazioni sui pericoli (proiettili, boomerang mantidi, nemici, spike walls).
         /// </summary>
         private void ExtractHazards(HeroController hero, GameState state)
         {
             var playerPos = hero.transform.position;
             List<HazardInfo> hazards = new List<HazardInfo>();
 
-            // ============ 1. BOOMERANG DELLE MANTIDI ============
+            // 1. BOOMERANG DELLE MANTIDI
             GameObject[] allObjects = GameObject.FindObjectsOfType<GameObject>();
             foreach (var obj in allObjects)
             {
@@ -390,10 +376,10 @@ namespace SyntheticSoulMod
 
                 // Rileva boomerang mantidi
                 if (name.Contains("javelin") || name.Contains("boomerang") ||
-                    name.Contains("scythe") || (name.Contains("mantis") && name.Contains("shot")))
+                    name.Contains("scythe") || name.Contains("mantis") || name.Contains("shot"))
                 {
                     float distance = Vector2.Distance(playerPos, obj.transform.position);
-                    if (distance <= HAZARD_DETECTION_RADIUS)
+                    if (distance < HAZARD_DETECTION_RADIUS)
                     {
                         var hazard = new HazardInfo();
                         hazard.type = "boomerang";
@@ -414,7 +400,7 @@ namespace SyntheticSoulMod
                 }
             }
 
-            // ============ 2. PROJECTILES GENERICI (Backup) ============
+            // 2. PROJECTILES GENERICI (Backup)
             string[] projectileTags = new string[] { "Spell", "Projectile", "Attack" };
             foreach (string tag in projectileTags)
             {
@@ -426,7 +412,7 @@ namespace SyntheticSoulMod
                         if (proj != null && proj.activeInHierarchy)
                         {
                             float distance = Vector2.Distance(playerPos, proj.transform.position);
-                            if (distance <= HAZARD_DETECTION_RADIUS)
+                            if (distance < HAZARD_DETECTION_RADIUS)
                             {
                                 var hazard = new HazardInfo();
                                 hazard.type = "projectile";
@@ -449,7 +435,7 @@ namespace SyntheticSoulMod
                 catch { }
             }
 
-            // ============ 3. SPIKE WALLS E HAZARDS STATICI ============
+            // 3. SPIKE WALLS E HAZARDS STATICI
             Vector2[] spikeDirections = new Vector2[]
             {
                 Vector2.down,
@@ -468,9 +454,7 @@ namespace SyntheticSoulMod
                 if (hit.collider != null)
                 {
                     string hitName = hit.collider.gameObject.name.ToLower();
-                    bool isSpike = hitName.Contains("spike") ||
-                                   hitName.Contains("thorn") ||
-                                   hitName.Contains("hazard") ||
+                    bool isSpike = hitName.Contains("spike") || hitName.Contains("thorn") || hitName.Contains("hazard") ||
                                    hit.collider.gameObject.layer == LayerMask.NameToLayer("Hazards");
 
                     if (isSpike && hit.distance < 10f)
@@ -489,14 +473,14 @@ namespace SyntheticSoulMod
                 }
             }
 
-            // ============ 4. ENEMIES (Mantis Lords stesse) ============
+            // 4. ENEMIES (Mantis Lords stesse)
             var healthManagers = GameObject.FindObjectsOfType<HealthManager>();
             foreach (var hm in healthManagers)
             {
-                if (hm.hp > 0 && hm.hp <= 50 && hm.gameObject.activeInHierarchy)
+                if (hm.hp > 0 && hm.hp < 50 && hm.gameObject.activeInHierarchy)
                 {
                     float distance = Vector2.Distance(playerPos, hm.transform.position);
-                    if (distance <= HAZARD_DETECTION_RADIUS)
+                    if (distance < HAZARD_DETECTION_RADIUS)
                     {
                         var hazard = new HazardInfo();
                         hazard.type = "enemy";
@@ -548,9 +532,7 @@ namespace SyntheticSoulMod
             state.damageTaken = 0;
 
             for (int i = 0; i < 5; i++)
-            {
                 state.terrainInfo[i] = 1.0f;
-            }
 
             state.bossX = 0f;
             state.bossY = 0f;
