@@ -125,7 +125,7 @@ namespace SyntheticSoulMod
             ExtractPlayerState(hero, state);
 
             // TERRAIN INFO (with Hazards/Spikes)
-            ExtractTerrainInfo(hero, state);
+            ExtractTerrainInfo();
 
             // BOSS STATE (ENHANCED)
             ExtractBossState(hero, state);
@@ -171,35 +171,42 @@ namespace SyntheticSoulMod
         /// <summary>
         /// Estrae informazioni sul terreno E hazards fissi (spikes) usando raycasts.
         /// </summary>
-        private void ExtractTerrainInfo(HeroController hero, GameState state)
+        private float[] ExtractTerrainInfo()
         {
-            var pos = hero.transform.position;
-            bool facingRight = hero.cState.facingRight;
-            float direction = facingRight ? 1f : -1f;
+            float[] terrainInfo = new float[5];
+            Vector2 playerPos = HeroController.instance.transform.position;
+            LayerMask terrainMask = LayerMask.GetMask("Terrain");
 
-            // 0: Floor Distance (sotto) - usa hazardLayer per rilevare anche spikes
-            state.terrainInfo[0] = RaycastDistance(pos, Vector2.down, RAYCAST_DISTANCE, hazardLayer);
+            // Ground check (index 0)
+            RaycastHit2D groundHit = Physics2D.Raycast(playerPos, Vector2.down, 2f, terrainMask);
+            terrainInfo[0] = groundHit.collider != null ? groundHit.distance / 2f : 1.0f;
 
-            // 1: Gap Ahead (avanti-basso, diagonale 45°)
-            Vector2 gapDir = new Vector2(direction, -1f).normalized;
-            state.terrainInfo[1] = RaycastDistance(pos, gapDir, RAYCAST_DISTANCE, hazardLayer);
+            // Ceiling check (index 1)
+            RaycastHit2D ceilingHit = Physics2D.Raycast(playerPos, Vector2.up, 2f, terrainMask);
+            terrainInfo[1] = ceilingHit.collider != null ? ceilingHit.distance / 2f : 1.0f;
 
-            // 2: Wall Ahead (avanti, orizzontale) - include spike walls
-            Vector2 wallDir = new Vector2(direction, 0f);
-            state.terrainInfo[2] = RaycastDistance(pos, wallDir, RAYCAST_DISTANCE, hazardLayer);
+            // Wall ahead check (index 2) - CON DEBUG LOG
+            Vector2 facingDir = HeroController.instance.cState.facingRight ? Vector2.right : Vector2.left;
+            RaycastHit2D wallHit = Physics2D.Raycast(playerPos, facingDir, 3f, terrainMask);
+            terrainInfo[2] = wallHit.collider != null ? wallHit.distance / 3f : 1.0f;
 
-            // 3: Ceiling Ahead (avanti-alto, diagonale 45°)
-            Vector2 ceilingAheadDir = new Vector2(direction, 1f).normalized;
-            state.terrainInfo[3] = RaycastDistance(pos, ceilingAheadDir, RAYCAST_DISTANCE, hazardLayer);
-
-            // 4: Ceiling Distance (sopra)
-            state.terrainInfo[4] = RaycastDistance(pos, Vector2.up, RAYCAST_DISTANCE, hazardLayer);
-
-            // Normalizza distanze (0 = molto vicino, 1 = molto lontano)
-            for (int i = 0; i < state.terrainInfo.Length; i++)
+            // DEBUG LOG - Rimuovi dopo test
+            if (wallHit.collider != null && wallHit.distance < 0.5f)
             {
-                state.terrainInfo[i] = Mathf.Clamp01(state.terrainInfo[i] / RAYCAST_DISTANCE);
+                Debug.Log($"[WALL DETECT] Distance: {wallHit.distance:F2}, Normalized: {terrainInfo[2]:F2}, Facing: {(HeroController.instance.cState.facingRight ? "Right" : "Left")}");
             }
+
+            // Wall behind check (index 3)
+            Vector2 behindDir = HeroController.instance.cState.facingRight ? Vector2.left : Vector2.right;
+            RaycastHit2D wallBehindHit = Physics2D.Raycast(playerPos, behindDir, 3f, terrainMask);
+            terrainInfo[3] = wallBehindHit.collider != null ? wallBehindHit.distance / 3f : 1.0f;
+
+            // Platform check diagonal (index 4)
+            Vector2 diagDir = new Vector2(facingDir.x, -0.5f).normalized;
+            RaycastHit2D diagHit = Physics2D.Raycast(playerPos, diagDir, 3f, terrainMask);
+            terrainInfo[4] = diagHit.collider != null ? diagHit.distance / 3f : 1.0f;
+
+            return terrainInfo;
         }
 
         /// <summary>

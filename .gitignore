@@ -59,7 +59,7 @@ plots_*/
 # Modelli salvati
 checkpoints/
 checkpoints_dqn/
-checkpoints_ppo_mantis_stable/
+checkpoints_ppo_mantis_optimized/
 *.pth
 *.pt
 *.ckpt
