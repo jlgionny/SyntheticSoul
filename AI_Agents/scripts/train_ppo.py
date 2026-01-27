@@ -125,7 +125,7 @@ def train_ppo(
             print(f"[PPO] Could not load checkpoint: {e}")
 
     # Training logs
-    logfile = os.path.join(checkpoint_dir_full, "training_log.csv")
+    logfile = os.path.join(checkpoint_dir_full, "training_log.txt")
     if not os.path.exists(logfile):
         with open(logfile, "w") as f:
             f.write(
@@ -240,7 +240,7 @@ def train_ppo(
             )
             agent.save(checkpoint_path)
             agent.save(latest_checkpoint)
-            print(f"  💾 Checkpoint saved")
+            print("  💾 Checkpoint saved")
 
     # Training complete
     print("\n" + "=" * 60)

@@ -57,18 +57,17 @@ plots/
 plots_*/
 
 # Modelli salvati
-checkpoints/
-checkpoints_dqn/
+checkpoints*/
 checkpoints_ppo_optimized/
 *.pth
 *.pt
 *.ckpt
 *.h5
 *.hdf5
-*.csv
 
 # Log di training
 training_log.txt
+training_log.csv
 training_log_ppo.txt
 training_log_dqn.txt
 *.log
