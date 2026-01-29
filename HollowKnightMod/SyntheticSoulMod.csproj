@@ -5,7 +5,7 @@
     <LangVersion>latest</LangVersion>
     <RootNamespace>SyntheticSoulMod</RootNamespace>
   </PropertyGroup>
-  
+
   <PropertyGroup>
     <HKManaged>C:\Program Files (x86)\Steam\steamapps\common\Hollow Knight\hollow_knight_Data\Managed</HKManaged>
   </PropertyGroup>
@@ -39,10 +39,14 @@
       <HintPath>$(HKManaged)\MMHOOK_Assembly-CSharp.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.AnimationModule">
+  <HintPath>$(HKManaged)\UnityEngine.AnimationModule.dll</HintPath>
+  <Private>false</Private>
+</Reference>
   </ItemGroup>
 
   <Target Name="CopyMod" AfterTargets="Build">
-    <Copy SourceFiles="$(TargetDir)$(TargetName).dll" 
+    <Copy SourceFiles="$(TargetDir)$(TargetName).dll"
       DestinationFolder="$(HKManaged)\Mods\SyntheticSoulMod" />
     <Message Text="SyntheticSoulMod installata correttamente!" Importance="High" />
   </Target>

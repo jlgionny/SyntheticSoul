@@ -43,11 +43,6 @@ namespace SyntheticSoulMod
         // ============ RELOAD SAFETY ============
         private bool ignoreDamageUntilReady = false;
 
-        // ============ AUTO-LOAD MANTIS LORDS ============
-        private const string TARGET_BOSS_SCENE = "GG_Mantis_Lords";
-        private bool autoLoadRequested = false;
-        private bool hasAutoLoaded = false; // Previene auto-load multipli
-
         public static SyntheticSoulMod Instance
         {
             get
@@ -63,12 +58,12 @@ namespace SyntheticSoulMod
             _instance = this;
         }
 
-        public override string GetVersion() => "9.2.0.0";
+        public override string GetVersion() => "9.3.0.0";
 
         public override void Initialize(Dictionary<string, Dictionary<string, GameObject>> preloadedObjects)
         {
-            Log("Initializing SyntheticSoul Mod v9.2.0 (MANTIS LORDS FIX)...");
-            DesktopLogger.Log("=== SYNTHETIC SOUL MOD v9.2.0 - MANTIS LORDS FIX ===");
+            Log("Initializing SyntheticSoul Mod v9.3.0 (NO AUTO-LOAD)...");
+            DesktopLogger.Log("=== SYNTHETIC SOUL MOD v9.3.0 - NO AUTO-LOAD ===");
 
             stateExtractor = new GameStateExtractor();
             actionExecutor = new ActionExecutor();
@@ -98,78 +93,7 @@ namespace SyntheticSoulMod
             Log("SyntheticSoul Mod ready!");
             DesktopLogger.Log("✓ Boss FSM monitoring active");
             DesktopLogger.Log("✓ Mantis Lords multi-kill tracking enabled");
-            DesktopLogger.Log("✓ Waiting for Python connection to auto-load Mantis Lords...");
-        }
-
-        // ============ AUTO-LOAD FUNCTIONALITY ============
-        private IEnumerator DelayedAutoLoad()
-        {
-            // Aspetta che il gioco sia completamente caricato
-            yield return new WaitForSeconds(3f);
-
-            // Verifica che GameManager sia pronto
-            if (GameManager.instance == null)
-            {
-                DesktopLogger.Log("[AutoLoad] GameManager not ready, aborting auto-load");
-                yield break;
-            }
-
-            // Verifica che ci sia una scena attiva valida
-            string currentSceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
-            DesktopLogger.Log($"[AutoLoad] Current scene: {currentSceneName}");
-
-            // Auto-load SOLO se siamo in una scena di gioco normale (non menu/loading)
-            if (string.IsNullOrEmpty(currentSceneName) ||
-                currentSceneName.Contains("Menu") ||
-                currentSceneName.Contains("Intro") ||
-                currentSceneName.Contains("Opening"))
-            {
-                DesktopLogger.Log("[AutoLoad] In menu/intro scene, forcing load anyway...");
-            }
-
-            DesktopLogger.Log("[AutoLoad] Triggering auto-load to Mantis Lords...");
-            ForceLoadMantisLords();
-        }
-
-        /// <summary>
-        /// Forza il caricamento della scena Mantis Lords (Hall of Gods)
-        /// </summary>
-        public void ForceLoadMantisLords()
-        {
-            if (autoLoadRequested)
-            {
-                DesktopLogger.Log("[AutoLoad] Request already in progress, skipping...");
-                return;
-            }
-
-            autoLoadRequested = true;
-            DesktopLogger.Log($"[AutoLoad] ═══ FORCING LOAD: {TARGET_BOSS_SCENE} ═══");
-
-            // Prepara PlayerData per Godhome
-            var pd = PlayerData.instance;
-            if (pd != null)
-            {
-                // Simula modalità Boss Rush per evitare bug grafici
-                pd.bossRushMode = true;
-                pd.SetBool("atBench", false);
-                DesktopLogger.Log("[AutoLoad] PlayerData configured for Godhome mode");
-            }
-
-            // Avvia transizione scena
-            GameManager.instance.StartCoroutine(LoadBossScene());
-        }
-
-        private IEnumerator LoadBossScene()
-        {
-            yield return new WaitForSeconds(0.5f);
-
-            sceneChangeHandled = false;
-            episodeEnded = false;
-            isReloading = false;
-
-            DesktopLogger.Log($"[AutoLoad] Loading scene: {TARGET_BOSS_SCENE}");
-            UnityEngine.SceneManagement.SceneManager.LoadScene(TARGET_BOSS_SCENE);
-            autoLoadRequested = false;
+            DesktopLogger.Log("✓ Waiting for Python connection (NO AUTO-LOAD)");
         }
 
         // ============ SCENE TRACKING ============
@@ -195,7 +119,6 @@ namespace SyntheticSoulMod
             // Reset contatore Mantis Lords
             mantisLordsKilled = 0;
             killedMantisIds.Clear();
-
             stateExtractor?.ResetTracking();
 
             DesktopLogger.Log($"[Scene] Entered: {currentScene} (from: {from.name})");
@@ -203,7 +126,6 @@ namespace SyntheticSoulMod
             if (currentScene.StartsWith("GG_") || IsBossScene(currentScene))
             {
                 isInBossArena = true;
-
                 if (IsBossScene(currentScene))
                 {
                     lastBossScene = currentScene;
@@ -234,7 +156,7 @@ namespace SyntheticSoulMod
         private IEnumerator RestoreHeroAfterReload()
         {
             DesktopLogger.Log("[Restore] ═══════════════════════════════════════");
-            DesktopLogger.Log("[Restore] ═══ SCENE RESTORATION v9.2.0 ═══");
+            DesktopLogger.Log("[Restore] ═══ SCENE RESTORATION v9.3.0 ═══");
             DesktopLogger.Log("[Restore] ═══════════════════════════════════════");
 
             // STEP 1: BLOCCA DANNI IMMEDIATAMENTE
@@ -316,9 +238,7 @@ namespace SyntheticSoulMod
                 }
 
                 if (timeout >= 5f)
-                {
                     DesktopLogger.Log("[Restore] ⚠ Boss intro timeout - proceeding anyway");
-                }
             }
             else
             {
@@ -339,7 +259,6 @@ namespace SyntheticSoulMod
             }
 
             hero.MaxHealth();
-
             if (hero.cState.dead)
             {
                 hero.cState.dead = false;
@@ -485,7 +404,6 @@ namespace SyntheticSoulMod
                     if (obj == null || obj == currentHeroGO) continue;
 
                     string name = obj.name.ToLower();
-
                     if (name.Contains("(clone)") && (name.Contains("knight") || name.Contains("hero")))
                     {
                         DesktopLogger.Log($"[Cleanup] Removing clone: {obj.name}");
@@ -623,7 +541,6 @@ namespace SyntheticSoulMod
                     gameState.damageTaken = damageTakenSinceLastUpdate;
                     damageTakenSinceLastUpdate = 0;
                 }
-
                 gameState.isDead = isDeath;
                 gameState.bossDefeated = !isDeath;
                 communicator?.SendState(gameState);
@@ -635,21 +552,20 @@ namespace SyntheticSoulMod
             // Mantieni time scale normale
             Time.timeScale = 1f;
 
-            // MODIFICA CHIAVE: Se siamo in una scena boss di Godhome, ricarica quella
+            // Ricarica la scena corrente se è una boss arena
             string currentSceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
-            string sceneToLoad = TARGET_BOSS_SCENE;
+            string sceneToLoad = currentSceneName;
 
             if (currentSceneName.StartsWith("GG_") &&
                 currentSceneName != "GG_Workshop" &&
                 currentSceneName != "GG_Atrium" &&
                 currentSceneName != "GG_Waterways")
             {
-                sceneToLoad = currentSceneName;
-                DesktopLogger.Log($"[Reload] Staying in Godhome arena: {sceneToLoad}");
+                DesktopLogger.Log($"[Reload] Reloading current Godhome arena: {sceneToLoad}");
             }
             else
             {
-                DesktopLogger.Log($"[Reload] Forcing return to: {sceneToLoad}");
+                DesktopLogger.Log($"[Reload] Reloading: {sceneToLoad}");
             }
 
             // Prepara PlayerData per evitare bench respawn
@@ -683,7 +599,6 @@ namespace SyntheticSoulMod
 
                     killedMantisIds.Add(mantisId);
                     mantisLordsKilled++;
-
                     DesktopLogger.Log($"[Victory] Mantis Lord defeated ({mantisLordsKilled}/3)");
 
                     // Solo dopo aver ucciso tutte e 3 le mantidi, resetta
@@ -743,17 +658,17 @@ namespace SyntheticSoulMod
 
             string name = enemy.name.ToLower();
             bool isBossByName = name.Contains("hornet") || name.Contains("mantis") ||
-                                name.Contains("false knight") || name.Contains("mawlek") ||
-                                name.Contains("soul master") || name.Contains("broken vessel") ||
-                                name.Contains("dung defender") || name.Contains("traitor lord") ||
-                                name.Contains("collector") || name.Contains("god tamer") ||
-                                name.Contains("hive knight") || name.Contains("ghost warrior") ||
-                                name.Contains("crystal guardian") || name.Contains("white defender") ||
-                                name.Contains("lost kin") || name.Contains("grey prince") ||
-                                name.Contains("nosk") || name.Contains("flukemarm") ||
-                                name.Contains("massive moss charger") || name.Contains("gruz mother") ||
-                                name.Contains("vengefly king") || name.Contains("nightmare king") ||
-                                name.Contains("radiance") || name.Contains("boss") || name.Contains("gruz");
+                name.Contains("false knight") || name.Contains("mawlek") ||
+                name.Contains("soul master") || name.Contains("broken vessel") ||
+                name.Contains("dung defender") || name.Contains("traitor lord") ||
+                name.Contains("collector") || name.Contains("god tamer") ||
+                name.Contains("hive knight") || name.Contains("ghost warrior") ||
+                name.Contains("crystal guardian") || name.Contains("white defender") ||
+                name.Contains("lost kin") || name.Contains("grey prince") ||
+                name.Contains("nosk") || name.Contains("flukemarm") ||
+                name.Contains("massive moss charger") || name.Contains("gruz mother") ||
+                name.Contains("vengefly king") || name.Contains("nightmare king") ||
+                name.Contains("radiance") || name.Contains("boss") || name.Contains("gruz");
 
             if (isBossByName) return true;
 
@@ -782,14 +697,6 @@ namespace SyntheticSoulMod
                         actionExecutor.DestroyDevice();
 
                     actionExecutor = new ActionExecutor();
-
-                    // AUTO-LOAD SOLO ALLA PRIMA CONNESSIONE PYTHON
-                    if (!hasAutoLoaded)
-                    {
-                        hasAutoLoaded = true;
-                        DesktopLogger.Log("[AutoLoad] First Python connection detected - triggering Mantis Lords load in 3 seconds...");
-                        GameManager.instance.StartCoroutine(DelayedAutoLoad());
-                    }
                 }
                 else
                 {
@@ -810,7 +717,6 @@ namespace SyntheticSoulMod
                 actionExecutor.Update();
 
             timeSinceLastUpdate += Time.deltaTime;
-
             if (timeSinceLastUpdate >= UPDATE_INTERVAL)
             {
                 timeSinceLastUpdate = 0f;
@@ -834,11 +740,8 @@ namespace SyntheticSoulMod
                 if (hero.cState.transitioning || !hero.acceptingInput)
                     return;
 
-                if (!isInBossArena)
-                    return;
-
+                // Estrai stato anche se NON in boss arena (per test movement)
                 var gameState = stateExtractor.ExtractState();
-
                 lock (damageLock)
                 {
                     gameState.damageTaken = damageTakenSinceLastUpdate;
@@ -848,21 +751,10 @@ namespace SyntheticSoulMod
                 communicator.SendState(gameState);
                 string action = communicator.ReceiveAction();
 
-                // Gestisci comandi speciali
-                if (!string.IsNullOrEmpty(action))
-                {
-                    if (action == "START_TRAINING")
-                    {
-                        DesktopLogger.Log("[Command] Received START_TRAINING command");
-                        ForceLoadMantisLords();
-                        return;
-                    }
-                }
-
                 bool canExecute = hero != null &&
-                                 !hero.cState.dead &&
-                                 !hero.cState.recoiling &&
-                                 hero.acceptingInput;
+                    !hero.cState.dead &&
+                    !hero.cState.recoiling &&
+                    hero.acceptingInput;
 
                 if (!string.IsNullOrEmpty(action) && action != "IDLE" && canExecute)
                 {

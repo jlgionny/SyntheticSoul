@@ -1,7 +1,3 @@
-"""
-Hollow Knight Environment - Minimal reward with wall penalty.
-"""
-
 import socket
 import json
 import time
@@ -9,8 +5,11 @@ from typing import Dict, Tuple, Optional, Any
 
 
 class HollowKnightEnv:
-    """Environment wrapper with minimal reward shaping + wall penalty."""
+    """
+    Environment wrapper aggiornato (Anti-Camping & Aggressive).
+    """
 
+    # DEFINIZIONE AZIONI (Indenta con 4 spazi)
     ACTIONS = {
         0: "MOVE_LEFT",
         1: "MOVE_RIGHT",
@@ -20,6 +19,7 @@ class HollowKnightEnv:
         5: "ATTACK",
         6: "DASH",
         7: "SPELL",
+        8: "IDLE",  # <--- Nuova azione aggiunta correttamente
     }
 
     def __init__(
@@ -38,7 +38,7 @@ class HollowKnightEnv:
         self.connected = False
         self.use_reward_shaping = use_reward_shaping
 
-        # Minimal tracking
+        # Tracking per calcolo differenze reward
         if use_reward_shaping:
             self.prev_boss_hp = None
             self.prev_player_hp = None
@@ -97,69 +97,91 @@ class HollowKnightEnv:
 
     def _compute_reward(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
         """
-        MINIMAL REWARD + WALL PENALTY:
-        1. Boss damage dealt: +100 per HP
-        2. Player damage taken: -10 per HP
-        3. Mantis Lord kill: +500
-        4. Death: -50
-        5. Victory: +1000
-        6. Wall proximity penalty: -0.5 (NEW)
+        Calcola il reward con logica corretta per evitare il camping sui muri.
         """
         reward = 0.0
-        info = {}
+        info = {"damage_taken": 0}
 
         boss_hp = state.get("bossHealth", 100.0)
         player_hp = state.get("playerHealth", 5)
         mantis_killed = state.get("mantisLordsKilled", 0)
 
-        # NUOVO: Wall proximity penalty
+        # --- DATI POSIZIONALI ---
         terrain = state.get("terrainInfo", [1.0] * 5)
-        wall_ahead = terrain[2] if len(terrain) > 2 else 1.0
-        distance_to_boss = state.get("distanceToBoss", 100.0)
+        space_ahead = terrain[2] if len(terrain) > 2 else 0.0
+        space_behind = terrain[3] if len(terrain) > 3 else 0.0
 
-        # Se vicino al muro E lontano dal boss = BAD
-        if wall_ahead < 0.2 and distance_to_boss > 15.0:
+        dist_to_boss = state.get("distanceToBoss", 20.0)
+        is_facing_boss = state.get("isFacingBoss", False)
+        hazards = state.get("nearbyHazards", [])
+
+        # 1. ANALISI POSIZIONE
+        is_touching_wall = space_ahead < 1.0 or space_behind < 1.0
+        is_centered = space_ahead > 5.0 and space_behind > 5.0
+
+        # 2. CALCOLO REWARD PROSSIMITÀ
+        proximity_reward = 0.0
+
+        if dist_to_boss < 5.0:
+            proximity_reward = 0.2
+            if is_facing_boss:
+                proximity_reward += 0.1
+        elif dist_to_boss < 10.0:
+            proximity_reward = 0.1
+            if is_facing_boss:
+                proximity_reward += 0.05
+        elif dist_to_boss < 20.0:
+            proximity_reward = 0.02
+        else:
+            proximity_reward = -0.1
+
+        # 3. PENALITÀ AMBIENTALI
+        if is_touching_wall:
             reward -= 0.5
-            # print(f"⚠️ Wall proximity penalty: -0.5")
+            if proximity_reward > 0:
+                proximity_reward = 0.0
 
-        # 1. BOSS DAMAGE
+        reward += proximity_reward
+
+        if is_centered:
+            reward += 0.05
+
+        if hazards:
+            min_hazard_dist = 100.0
+            for h in hazards:
+                d = h.get("distance", 100.0)
+                if d < min_hazard_dist:
+                    min_hazard_dist = d
+            if min_hazard_dist < 1.0:
+                reward -= 0.5
+
+        # 4. COMBATTIMENTO
         if self.prev_boss_hp is not None:
             boss_damage = self.prev_boss_hp - boss_hp
             if boss_damage > 0:
-                reward += boss_damage * 100.0
-                print(f"💥 Boss damage: {boss_damage} HP (+{boss_damage * 100.0:.0f})")
+                reward += 2.0
 
-        # 2. PLAYER DAMAGE
         if self.prev_player_hp is not None:
             player_damage = self.prev_player_hp - player_hp
             if player_damage > 0:
-                reward -= player_damage * 10.0
-                print(
-                    f"💔 Player damage: {player_damage} HP (-{player_damage * 10.0:.0f})"
-                )
+                reward -= 0.5
+                info["damage_taken"] = player_damage
 
-        # 3. MANTIS KILL
         if mantis_killed > self.prev_mantis_killed:
-            reward += 500.0
-            print(f"🏆 Mantis Lord #{mantis_killed} killed! (+500)")
+            reward += 20.0
             self.prev_mantis_killed = mantis_killed
 
-        # 4. TERMINAL REWARDS
         if done:
             if state.get("isDead", False):
-                reward -= 50.0
-                print("💀 Death: -50")
+                reward -= 5.0
             elif state.get("bossDefeated", False) or mantis_killed == 3:
-                reward += 1000.0
-                print("🎉 VICTORY: +1000")
+                reward += 100.0
 
-        # Update tracking
         self.prev_boss_hp = boss_hp
         self.prev_player_hp = player_hp
+        self.prev_mantis_killed = mantis_killed
 
-        info["boss_damage"] = boss_hp
-        info["player_hp"] = player_hp
-        info["mantis_killed"] = mantis_killed
+        reward = max(-5.0, min(5.0, reward))
 
         return reward, info
 
@@ -183,7 +205,6 @@ class HollowKnightEnv:
 
         print("[Env] ✓ Reset complete")
 
-        # Reset tracking
         if self.use_reward_shaping:
             self.prev_boss_hp = state.get("bossHealth", 100.0)
             self.prev_player_hp = state.get("playerHealth", 5)

@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using Newtonsoft.Json;
+using Modding;
 
 namespace SyntheticSoulMod
 {
@@ -18,191 +20,106 @@ namespace SyntheticSoulMod
         private volatile bool isRunning = false;
         private Thread serverThread;
 
+        // Coda comandi (V41)
+        private Queue<string> commandQueue = new Queue<string>();
+
         public SocketCommunicator(int port)
         {
             this.port = port;
         }
 
-        /// <summary>
-        /// FIX: Persistent server that runs in a loop, accepting multiple connections
-        /// </summary>
         public void StartServer()
         {
-            if (isRunning)
-            {
-                Modding.Logger.LogWarn("Server already running!");
-                return;
-            }
+            if (isRunning) return;
 
             isRunning = true;
-
-            // FIX: Run server loop on a dedicated background thread
             serverThread = new Thread(ServerLoop);
             serverThread.IsBackground = true;
             serverThread.Start();
 
-            Modding.Logger.Log($"[SocketCommunicator] Persistent server thread started on port {port}");
-            DesktopLogger.Log($"SocketCommunicator: Persistent server started on port {port}");
+            Modding.Logger.Log($"[SocketCommunicator] Persistent server started on port {port}");
         }
 
-        /// <summary>
-        /// FIX: Main server loop - continuously accepts new connections
-        /// </summary>
         private void ServerLoop()
         {
             try
             {
-                // Initialize TcpListener once
                 server = new TcpListener(IPAddress.Loopback, port);
                 server.Start();
 
-                Modding.Logger.Log($"[SocketCommunicator] TcpListener started on port {port}");
-                DesktopLogger.Log($"TcpListener started, waiting for connections...");
-
-                // FIX: Infinite loop to accept multiple client connections
                 while (isRunning)
                 {
                     try
                     {
-                        Modding.Logger.Log("[SocketCommunicator] Waiting for Python agent to connect...");
-                        DesktopLogger.Log("Waiting for client connection...");
-
-                        // FIX: Blocking call - waits for new connection
-                        // This is OK since we're on a background thread
                         TcpClient newClient = server.AcceptTcpClient();
 
-                        // FIX: Close any existing client before accepting new one
                         lock (lockObject)
                         {
                             CloseCurrentClient();
-
-                            // Setup new client
                             client = newClient;
-                            client.NoDelay = true;
+                            client.NoDelay = true; // Importante per ridurre latenza
+                            client.ReceiveBufferSize = 4096;
+                            client.SendBufferSize = 4096;
+
                             stream = client.GetStream();
-                            stream.ReadTimeout = 100;
-                            stream.WriteTimeout = 100;
+
+                            // Timeout aumentato a 10s per evitare disconnessioni se Python fa calcoli pesanti
+                            stream.ReadTimeout = 10000;
+                            stream.WriteTimeout = 10000;
+
                             isConnected = true;
+                            commandQueue.Clear();
                         }
 
-                        string clientEndpoint = client.Client.RemoteEndPoint?.ToString() ?? "Unknown";
-                        Modding.Logger.Log($"[SocketCommunicator] ✓ Client connected: {clientEndpoint}");
-                        DesktopLogger.Log($"✓ NEW CLIENT CONNECTED: {clientEndpoint} at {DateTime.Now:HH:mm:ss}");
+                        DesktopLogger.Log($"[Socket] Client Connected: {client.Client.RemoteEndPoint}");
 
-                        // FIX: Monitor connection health
-                        MonitorConnection();
-                    }
-                    catch (SocketException se)
-                    {
-                        if (isRunning)
+                        while (isConnected && isRunning)
                         {
-                            Modding.Logger.LogError($"[SocketCommunicator] Socket error in accept loop: {se.Message}");
-                            DesktopLogger.LogError($"Socket error: {se.Message}");
-                            Thread.Sleep(1000); // Brief pause before retrying
+                            Thread.Sleep(100);
                         }
                     }
                     catch (Exception ex)
                     {
-                        if (isRunning)
-                        {
-                            Modding.Logger.LogError($"[SocketCommunicator] Error in server loop: {ex.Message}");
-                            DesktopLogger.LogError($"Server loop error: {ex.Message}");
-                            Thread.Sleep(1000);
-                        }
+                        if (isRunning) Modding.Logger.LogError($"Server loop error: {ex.Message}");
+                        Thread.Sleep(1000);
                     }
                 }
             }
             catch (Exception e)
             {
-                Modding.Logger.LogError($"[SocketCommunicator] Fatal server error: {e.Message}\n{e.StackTrace}");
-                DesktopLogger.LogError($"Fatal server error: {e.Message}\n{e.StackTrace}");
+                Modding.Logger.LogError($"Fatal server error: {e.Message}");
                 isRunning = false;
             }
             finally
             {
-                Modding.Logger.Log("[SocketCommunicator] Server loop ended");
-                DesktopLogger.Log("Server loop ended");
+                server?.Stop();
             }
         }
 
-        /// <summary>
-        /// FIX: Monitor connection and detect disconnections
-        /// </summary>
-        private void MonitorConnection()
-        {
-            // This runs on the server thread after accepting a client
-            // We don't actively monitor here - disconnection is detected during Send/Receive
-            // Just log that monitoring is active
-            Modding.Logger.Log("[SocketCommunicator] Connection monitoring active");
-        }
-
-        /// <summary>
-        /// FIX: Close current client connection (but keep server running)
-        /// </summary>
         private void CloseCurrentClient()
         {
-            // Must be called inside lock(lockObject)
-            if (isConnected)
-            {
-                Modding.Logger.Log("[SocketCommunicator] Closing current client connection...");
-                DesktopLogger.Log($"Closing client connection at {DateTime.Now:HH:mm:ss}");
-            }
-
             isConnected = false;
-
-            try
-            {
-                stream?.Close();
-                stream?.Dispose();
-                stream = null;
-            }
-            catch (Exception e)
-            {
-                Modding.Logger.LogWarn($"Error closing stream: {e.Message}");
-            }
-
-            try
-            {
-                client?.Close();
-                client = null;
-            }
-            catch (Exception e)
-            {
-                Modding.Logger.LogWarn($"Error closing client: {e.Message}");
-            }
+            commandQueue.Clear();
+            try { stream?.Close(); stream?.Dispose(); stream = null; } catch { }
+            try { client?.Close(); client = null; } catch { }
         }
 
         public void SendState(GameState state)
         {
-            if (!isConnected || stream == null)
-                return;
+            if (!isConnected || stream == null) return;
 
             lock (lockObject)
             {
-                // Double-check inside lock
-                if (!isConnected || stream == null || !stream.CanWrite)
-                    return;
-
+                if (!isConnected || stream == null || !stream.CanWrite) return;
                 try
                 {
                     string json = JsonConvert.SerializeObject(state);
                     byte[] data = Encoding.UTF8.GetBytes(json + "\n");
                     stream.Write(data, 0, data.Length);
-                    stream.Flush();
+                    // Non serve flush aggressivo con NoDelay, ma male non fa
                 }
-                catch (System.IO.IOException ioEx)
+                catch (Exception)
                 {
-                    // FIX: Connection lost during write
-                    Modding.Logger.LogWarn($"[SocketCommunicator] Client disconnected during SendState: {ioEx.Message}");
-                    DesktopLogger.LogWarning($"Client disconnected during SendState at {DateTime.Now:HH:mm:ss}");
-
-                    // FIX: Close client but DON'T stop the server - it will accept new connections
-                    CloseCurrentClient();
-                }
-                catch (Exception e)
-                {
-                    Modding.Logger.LogError($"[SocketCommunicator] Error sending state: {e.Message}");
-                    DesktopLogger.LogError($"SendState error: {e.Message}");
                     CloseCurrentClient();
                 }
             }
@@ -210,90 +127,70 @@ namespace SyntheticSoulMod
 
         public string ReceiveAction()
         {
-            if (!isConnected || stream == null)
-                return "IDLE";
+            if (!isConnected || stream == null) return "IDLE";
 
             lock (lockObject)
             {
-                // Double-check inside lock
-                if (!isConnected || stream == null || !stream.CanRead)
-                    return "IDLE";
+                // 1. Priorità alla Coda: Se abbiamo comandi residui (da burst precedenti), usiamoli.
+                if (commandQueue.Count > 0)
+                {
+                    return commandQueue.Dequeue();
+                }
+
+                if (!isConnected || stream == null || !stream.CanRead) return "IDLE";
 
                 try
                 {
-                    if (!stream.DataAvailable)
-                        return "IDLE";
+                    // =================================================================
+                    // FIX SINCRONIZZAZIONE (V42): LETTURA BLOCCANTE
+                    // Rimosso: if (!stream.DataAvailable) return "IDLE";
+                    // Ora Stream.Read BLOCCA il thread finché Python non invia il comando.
+                    // Questo costringe il gioco ad andare alla velocità di Python.
+                    // =================================================================
 
-                    byte[] buffer = new byte[1024];
-                    int bytesRead = stream.Read(buffer, 0, buffer.Length);
+                    byte[] buffer = new byte[4096];
+                    int bytesRead = stream.Read(buffer, 0, buffer.Length); // <--- QUI SI FERMA E ASPETTA
 
                     if (bytesRead > 0)
                     {
-                        string action = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                        return action.Trim();
-                    }
-                    else
-                    {
-                        // FIX: Zero bytes read = connection closed
-                        Modding.Logger.LogWarn("[SocketCommunicator] Client disconnected (0 bytes read)");
-                        DesktopLogger.LogWarning($"Client disconnected during ReceiveAction at {DateTime.Now:HH:mm:ss}");
-                        CloseCurrentClient();
-                        return "IDLE";
+                        string rawData = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                        string[] commands = rawData.Split(new char[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+
+                        foreach (string cmd in commands)
+                        {
+                            string cleanCmd = cmd.Trim().ToUpper();
+                            if (!string.IsNullOrEmpty(cleanCmd))
+                            {
+                                commandQueue.Enqueue(cleanCmd);
+                            }
+                        }
+
+                        if (commandQueue.Count > 0)
+                        {
+                            return commandQueue.Dequeue();
+                        }
                     }
                 }
-                catch (System.IO.IOException ioEx)
+                catch (System.IO.IOException)
                 {
-                    // FIX: Connection lost during read
-                    Modding.Logger.LogWarn($"[SocketCommunicator] Client disconnected during ReceiveAction: {ioEx.Message}");
-                    DesktopLogger.LogWarning($"Client disconnected during ReceiveAction at {DateTime.Now:HH:mm:ss}");
-                    CloseCurrentClient();
+                    // Timeout scaduto (Python non risponde da 10s) -> Restituisci IDLE per sbloccare
                     return "IDLE";
                 }
-                catch (Exception e)
+                catch (Exception ex)
                 {
-                    Modding.Logger.LogError($"[SocketCommunicator] Error receiving action: {e.Message}");
-                    DesktopLogger.LogError($"ReceiveAction error: {e.Message}");
+                    DesktopLogger.LogError($"Socket Read Error: {ex.Message}");
                     CloseCurrentClient();
                     return "IDLE";
                 }
             }
+            return "IDLE";
         }
 
         public void Close()
         {
-            Modding.Logger.Log("[SocketCommunicator] Shutting down server...");
-            DesktopLogger.Log("SocketCommunicator shutting down");
-
-            // FIX: Signal server loop to stop
             isRunning = false;
-
-            lock (lockObject)
-            {
-                CloseCurrentClient();
-            }
-
-            // FIX: Stop the TcpListener
-            try
-            {
-                server?.Stop();
-                server = null;
-            }
-            catch (Exception e)
-            {
-                Modding.Logger.LogWarn($"Error stopping server: {e.Message}");
-            }
-
-            // FIX: Wait for server thread to finish
-            if (serverThread != null && serverThread.IsAlive)
-            {
-                if (!serverThread.Join(2000)) // Wait up to 2 seconds
-                {
-                    Modding.Logger.LogWarn("Server thread did not stop gracefully");
-                }
-            }
-
-            Modding.Logger.Log("[SocketCommunicator] Server shut down complete");
-            DesktopLogger.Log("Server shut down complete");
+            lock (lockObject) { CloseCurrentClient(); }
+            try { server?.Stop(); } catch { }
         }
 
         public bool IsConnected => isConnected;
