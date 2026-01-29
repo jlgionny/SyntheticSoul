@@ -1,143 +1,30 @@
 using System;
-using System.Linq;
-using UnityEngine;
-using System.Reflection;
-using InControl;
 using Modding;
+using InControl;
+using UnityEngine;
 
 namespace SyntheticSoulMod
 {
-    // =================================================================================
-    // FIX V43: ANIMATION STABILITY (LOOK UP/DOWN FIX)
-    // Risolve il problema dello "spam" dell'animazione inchino/sguardo.
-    // Forza lo stato cState.lookingUp/Down in LateUpdate per evitare che il gioco lo resetti.
-    // =================================================================================
-    [DefaultExecutionOrder(9999)]
-    public class HeroPhysicsOverride : MonoBehaviour
-    {
-        private Rigidbody2D rb;
-        private HeroController hero;
-        private PropertyInfo runningProp;
-        private tk2dSpriteAnimator animator;
-
-        public float TargetVelocityX { get; set; } = 0f;
-        public bool IsActive { get; set; } = false;
-
-        public bool LockVelocity { get; set; } = false;
-        public bool ForceIdleAnim { get; set; } = false;
-
-        // V43: Nuovi flag per gestire esplicitamente lo sguardo
-        public bool IsLookingUp { get; set; } = false;
-        public bool IsLookingDown { get; set; } = false;
-
-        void Awake()
-        {
-            rb = GetComponent<Rigidbody2D>();
-            hero = GetComponent<HeroController>();
-            animator = hero.GetComponent<tk2dSpriteAnimator>();
-
-            if (hero != null && hero.cState != null)
-            {
-                runningProp = hero.cState.GetType().GetProperty("running",
-                    BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
-            }
-        }
-
-        void FixedUpdate()
-        {
-            if (IsActive && rb != null)
-            {
-                // V43: Se stiamo guardando su o giù, la velocità DEVE essere zero assoluto
-                if (IsLookingUp || IsLookingDown)
-                {
-                    rb.velocity = Vector2.zero;
-                    rb.angularVelocity = 0f;
-                }
-                else if (LockVelocity && hero.cState.onGround)
-                {
-                    rb.velocity = Vector2.zero;
-                    rb.angularVelocity = 0f;
-                }
-                else
-                {
-                    rb.velocity = new Vector2(TargetVelocityX, rb.velocity.y);
-                }
-            }
-        }
-
-        void LateUpdate()
-        {
-            if (!IsActive || hero == null) return;
-
-            // =========================================================
-            // FIX ANIMAZIONI LOOK UP / LOOK DOWN
-            // =========================================================
-            if (IsLookingUp && hero.cState.onGround)
-            {
-                // Forza lo stato interno per evitare che il gioco lo resetti
-                hero.cState.lookingUp = true;
-                hero.cState.lookingDown = false;
-
-                // Ferma input di movimento residui
-                if (runningProp != null) try { runningProp.SetValue(hero.cState, false, null); } catch { }
-
-                // Gestione sicura animazione
-                PlayAnimSafe("LookUp");
-                return; // Esce per evitare che ForceIdle sovrascriva
-            }
-
-            if (IsLookingDown && hero.cState.onGround)
-            {
-                hero.cState.lookingDown = true;
-                hero.cState.lookingUp = false;
-
-                if (runningProp != null) try { runningProp.SetValue(hero.cState, false, null); } catch { }
-
-                PlayAnimSafe("LookDown");
-                return; // Esce
-            }
-
-            // =========================================================
-            // FIX IDLE
-            // =========================================================
-            if (ForceIdleAnim)
-            {
-                if (rb != null) rb.velocity = Vector2.zero;
-
-                // Resetta gli stati di sguardo se siamo in IDLE forzato
-                if (hero.cState.lookingDown) hero.cState.lookingDown = false;
-                if (hero.cState.lookingUp) hero.cState.lookingUp = false;
-
-                if (runningProp != null) try { runningProp.SetValue(hero.cState, false, null); } catch {}
-
-                if (hero.cState.onGround && !hero.cState.attacking && !hero.cState.dashing)
-                {
-                   PlayAnimSafe("Idle");
-                }
-            }
-        }
-
-        private void PlayAnimSafe(string animName)
-        {
-            try {
-                if (animator == null) animator = hero.GetComponent<tk2dSpriteAnimator>();
-                if (animator != null) {
-                    // Controlla se sta già suonando per evitare il restart (flickering)
-                    if (!animator.IsPlaying(animName))
-                    {
-                        animator.Play(animName);
-                    }
-                }
-            } catch {}
-        }
-    }
-
+    /// <summary>
+    /// Virtual Input Device per Hollow Knight - Basato su HKRL
+    /// Usa bool state invece di DateTime expiration per maggiore stabilità
+    /// </summary>
     public class SyntheticSoulInputDevice : InputDevice
     {
-        public InputControl LeftControl { get; private set; }
-        public InputControl RightControl { get; private set; }
+        // State flags
+        private bool KeyUp = false;
+        private bool KeyDown = false;
+        private bool KeyLeft = false;
+        private bool KeyRight = false;
+        private bool KeyJump = false;
+        private bool KeyAttack = false;
+        private bool KeyDash = false;
+        private bool KeyCast = false;
+
         public InputControl UpControl { get; private set; }
         public InputControl DownControl { get; private set; }
+        public InputControl LeftControl { get; private set; }
+        public InputControl RightControl { get; private set; }
         public InputControl JumpControl { get; private set; }
         public InputControl AttackControl { get; private set; }
         public InputControl DashControl { get; private set; }
@@ -145,59 +32,229 @@ namespace SyntheticSoulMod
 
         public SyntheticSoulInputDevice() : base("Synthetic Soul Virtual Controller")
         {
-            LeftControl = AddControl(InputControlType.DPadLeft, "Left");
-            RightControl = AddControl(InputControlType.DPadRight, "Right");
             UpControl = AddControl(InputControlType.DPadUp, "Up");
             DownControl = AddControl(InputControlType.DPadDown, "Down");
-            JumpControl = AddControl(InputControlType.Action1, "Jump (A)");
-            CastControl = AddControl(InputControlType.Action2, "Cast (B)");
-            AttackControl = AddControl(InputControlType.Action3, "Attack (X)");
-            DashControl = AddControl(InputControlType.RightTrigger, "Dash (RT)");
+            LeftControl = AddControl(InputControlType.DPadLeft, "Left");
+            RightControl = AddControl(InputControlType.DPadRight, "Right");
+            JumpControl = AddControl(InputControlType.Action1, "Jump");
+            CastControl = AddControl(InputControlType.Action2, "Cast");
+            AttackControl = AddControl(InputControlType.Action3, "Attack");
+            DashControl = AddControl(InputControlType.RightTrigger, "Dash");
+
+            DesktopLogger.Log("✓ SyntheticSoulInputDevice created (HKRL-style)");
+        }
+
+        public override void Update(ulong updateTick, float deltaTime)
+        {
+            UpdateWithState(InputControlType.DPadUp, KeyUp, updateTick, deltaTime);
+            UpdateWithState(InputControlType.DPadDown, KeyDown, updateTick, deltaTime);
+            UpdateWithState(InputControlType.DPadLeft, KeyLeft, updateTick, deltaTime);
+            UpdateWithState(InputControlType.DPadRight, KeyRight, updateTick, deltaTime);
+            UpdateWithState(InputControlType.Action1, KeyJump, updateTick, deltaTime);
+            UpdateWithState(InputControlType.Action2, KeyCast, updateTick, deltaTime);
+            UpdateWithState(InputControlType.Action3, KeyAttack, updateTick, deltaTime);
+            UpdateWithValue(InputControlType.RightTrigger, KeyDash ? 1 : 0, updateTick, deltaTime);
+        }
+
+        // ============ HELPER METHODS (come in HKRL) ============
+
+        private static bool CanDash()
+        {
+            if (HeroController.instance == null) return false;
+            return ReflectionHelper.CallMethod<HeroController, bool>(HeroController.instance, "CanDash");
+        }
+
+        private static bool CanAttack()
+        {
+            if (HeroController.instance == null) return false;
+            return ReflectionHelper.CallMethod<HeroController, bool>(HeroController.instance, "CanAttack");
+        }
+
+        private static bool CanJump()
+        {
+            if (HeroController.instance == null) return false;
+            return ReflectionHelper.CallMethod<HeroController, bool>(HeroController.instance, "CanJump");
+        }
+
+        private static bool CanDoubleJump()
+        {
+            if (HeroController.instance == null) return false;
+            return ReflectionHelper.CallMethod<HeroController, bool>(HeroController.instance, "CanDoubleJump");
+        }
+
+        private static bool CanCast()
+        {
+            if (HeroController.instance == null) return false;
+            return ReflectionHelper.CallMethod<HeroController, bool>(HeroController.instance, "CanCast");
+        }
+
+        private static bool CanWallJump()
+        {
+            if (HeroController.instance == null) return false;
+            return ReflectionHelper.CallMethod<HeroController, bool>(HeroController.instance, "CanWallJump");
+        }
+
+        // ============ PUBLIC ACTION METHODS ============
+
+        public void Reset()
+        {
+            KeyUp = false;
+            KeyDown = false;
+            KeyLeft = false;
+            KeyRight = false;
+            KeyJump = false;
+            KeyAttack = false;
+            KeyDash = false;
+            KeyCast = false;
+        }
+
+        public void Left()
+        {
+            KeyLeft = true;
+            KeyRight = false;
+        }
+
+        public void Right()
+        {
+            KeyRight = true;
+            KeyLeft = false;
+        }
+
+        public void Up()
+        {
+            KeyUp = true;
+            // NON resettare KeyDown - necessario per spell direzionali
+        }
+
+        public void Down()
+        {
+            KeyDown = true;
+            // NON resettare KeyUp - necessario per spell direzionali
+        }
+
+        public void Jump()
+        {
+            if (!CanJump() && !CanDoubleJump() && !CanWallJump())
+                return;
+
+            KeyJump = true;
+            KeyDash = false;
+        }
+
+        public void Attack()
+        {
+            if (!CanAttack())
+                return;
+
+            if (KeyLeft && HeroController.instance != null)
+                HeroController.instance.FaceLeft();
+            if (KeyRight && HeroController.instance != null)
+                HeroController.instance.FaceRight();
+
+            KeyAttack = true;
+            KeyCast = false;
+        }
+
+        public void Dash()
+        {
+            if (!CanDash())
+                return;
+
+            if (KeyLeft && HeroController.instance != null)
+                HeroController.instance.FaceLeft();
+            else if (KeyRight && HeroController.instance != null)
+                HeroController.instance.FaceRight();
+
+            KeyDash = true;
+            KeyJump = false;
+        }
+
+        public void Cast()
+        {
+            if (!CanCast())
+                return;
+
+            if (KeyLeft && HeroController.instance != null)
+                HeroController.instance.FaceLeft();
+            if (KeyRight && HeroController.instance != null)
+                HeroController.instance.FaceRight();
+
+            KeyCast = true;
+            KeyAttack = false;
+        }
+
+        // Stop methods per rilasciare input
+        public void StopLR()
+        {
+            KeyLeft = false;
+            KeyRight = false;
+        }
+
+        public void StopUD()
+        {
+            KeyUp = false;
+            KeyDown = false;
+        }
+
+        public void StopJump()
+        {
+            KeyJump = false;
+        }
+
+        public void StopDash()
+        {
+            KeyDash = false;
+        }
+
+        public void StopAttack()
+        {
+            KeyAttack = false;
+        }
+
+        public void StopCast()
+        {
+            KeyCast = false;
         }
     }
 
     public class ActionExecutor
     {
         private HeroController hero;
-        private SyntheticSoulInputDevice virtualDevice;
-        private HeroPhysicsOverride physicsOverride;
+        private SyntheticSoulInputDevice device;
         private bool deviceAttached = false;
         private bool actionsBindingComplete = false;
 
-        private DateTime leftExpiration, rightExpiration, upExpiration, downExpiration;
-        private DateTime jumpExpiration, attackExpiration, dashExpiration, castExpiration;
-
-        private const double MOVEMENT_DURATION = 0.2;
-        private const double TAP_DURATION = 0.05;
-
-        private float lastJumpTime = 0f;
-        private float lastAttackTime = 0f;
-        private float lastDashTime = 0f;
-        private float lastCastTime = 0f;
-
-        // TIMER PER DEBOUNCE
-        private float idleWaitTimer = 0f;
-        private const float IDLE_DELAY_THRESHOLD = 0.05f; // Ridotto leggermente per reattività
-
         private object inputHandler;
         private object heroActions;
-        private FieldInfo moveInputField;
-        private const float RUN_SPEED = 8.3f;
+
+        // Timer per auto-release degli input
+        private float jumpReleaseTime = 0f;
+        private float attackReleaseTime = 0f;
+        private float dashReleaseTime = 0f;
+        private float castReleaseTime = 0f;
+        private float moveReleaseTime = 0f;
+        private float lookReleaseTime = 0f;
+
+        private const float TAP_DURATION = 0.05f;
+        private const float MOVEMENT_DURATION = 0.15f;
 
         public ActionExecutor()
         {
-            DesktopLogger.Log("═══ ACTIONEXECUTOR V43 (ANIM FIX) ═══");
-            InitializeVirtualDevice();
+            DesktopLogger.Log("═══ ACTIONEXECUTOR V47 (HKRL-INSPIRED) ═══");
+            InitializeDevice();
         }
 
-        private void InitializeVirtualDevice()
+        private void InitializeDevice()
         {
             try
             {
-                virtualDevice = new SyntheticSoulInputDevice();
-                if (InputManager.Devices == null) return;
-                InputManager.AttachDevice(virtualDevice);
+                device = new SyntheticSoulInputDevice();
+                if (InputManager.Devices == null)
+                    return;
+
+                InputManager.AttachDevice(device);
                 deviceAttached = true;
+                DesktopLogger.Log("✓ Device attached to InputManager");
             }
             catch (Exception e)
             {
@@ -207,40 +264,46 @@ namespace SyntheticSoulMod
 
         private void BindDeviceToHeroActions()
         {
-            if (actionsBindingComplete || hero == null) return;
+            if (actionsBindingComplete || hero == null)
+                return;
+
             try
             {
-                physicsOverride = hero.gameObject.GetComponent<HeroPhysicsOverride>();
-                if (physicsOverride == null) physicsOverride = hero.gameObject.AddComponent<HeroPhysicsOverride>();
+                var inputHandlerField = typeof(HeroController).GetField("inputHandler",
+                    System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.Public);
 
-                var inputHandlerField = typeof(HeroController).GetField("inputHandler", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
-                if (inputHandlerField != null)
-                {
-                    inputHandler = inputHandlerField.GetValue(hero);
-                    var heroActionsField = inputHandler.GetType().GetField("inputActions", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
-                    if (heroActionsField != null) {
-                        heroActions = heroActionsField.GetValue(inputHandler);
-                        Type haType = heroActions.GetType();
+                if (inputHandlerField == null)
+                    return;
 
-                        BindAction(haType, "left", virtualDevice.LeftControl);
-                        BindAction(haType, "right", virtualDevice.RightControl);
-                        BindAction(haType, "up", virtualDevice.UpControl);
-                        BindAction(haType, "down", virtualDevice.DownControl);
-                        BindAction(haType, "jump", virtualDevice.JumpControl);
-                        BindAction(haType, "attack", virtualDevice.AttackControl);
-                        BindAction(haType, "dash", virtualDevice.DashControl);
-                        BindAction(haType, "cast", virtualDevice.CastControl);
-                    }
-                }
+                inputHandler = inputHandlerField.GetValue(hero);
+                var heroActionsField = inputHandler.GetType().GetField("inputActions",
+                    System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.Public);
 
-                moveInputField = typeof(HeroController).GetField("move_input", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
-                if (moveInputField == null) moveInputField = typeof(HeroController).GetField("moveInput", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+                if (heroActionsField == null)
+                    return;
+
+                heroActions = heroActionsField.GetValue(inputHandler);
+                Type haType = heroActions.GetType();
+
+                BindAction(haType, "left", device.LeftControl);
+                BindAction(haType, "right", device.RightControl);
+                BindAction(haType, "up", device.UpControl);
+                BindAction(haType, "down", device.DownControl);
+                BindAction(haType, "jump", device.JumpControl);
+                BindAction(haType, "attack", device.AttackControl);
+                BindAction(haType, "dash", device.DashControl);
+                BindAction(haType, "cast", device.CastControl);
 
                 actionsBindingComplete = true;
+                DesktopLogger.Log("✓ Actions bound to hero");
             }
-            catch (Exception ex)
+            catch (Exception e)
             {
-                DesktopLogger.LogError($"Bind Error: {ex.Message}");
+                DesktopLogger.LogError($"Binding failed: {e.Message}");
             }
         }
 
@@ -248,11 +311,18 @@ namespace SyntheticSoulMod
         {
             try
             {
-                FieldInfo field = type.GetField(name, BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+                var field = type.GetField(name,
+                    System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.Public);
+
                 if (field != null)
                 {
                     var action = field.GetValue(heroActions) as PlayerAction;
-                    if (action != null) action.AddBinding(new DeviceBindingSource(control.Target));
+                    if (action != null && control != null)
+                    {
+                        action.AddBinding(new DeviceBindingSource(control.Target));
+                    }
                 }
             }
             catch { }
@@ -260,190 +330,147 @@ namespace SyntheticSoulMod
 
         public void ExecuteAction(string action, bool force = false)
         {
-            if (hero == null) hero = HeroController.instance;
-            if (hero == null || hero.cState.dead) return;
+            if (hero == null)
+                hero = HeroController.instance;
 
-            if (action == "IDLE")
+            if (hero == null || hero.cState.dead)
+                return;
+
+            if (!force && !hero.acceptingInput)
             {
-                ReleaseAllKeys();
+                device?.Reset();
                 return;
             }
 
             try
             {
                 string cmd = action.ToUpper().Trim();
-                DateTime now = DateTime.Now;
                 float timeNow = Time.time;
 
                 switch (cmd)
                 {
                     case "MOVE_LEFT":
-                        leftExpiration = now.AddSeconds(MOVEMENT_DURATION);
-                        rightExpiration = DateTime.MinValue;
+                        device?.Left();
+                        moveReleaseTime = timeNow + MOVEMENT_DURATION;
                         break;
+
                     case "MOVE_RIGHT":
-                        rightExpiration = now.AddSeconds(MOVEMENT_DURATION);
-                        leftExpiration = DateTime.MinValue;
+                        device?.Right();
+                        moveReleaseTime = timeNow + MOVEMENT_DURATION;
                         break;
+
                     case "UP":
-                        upExpiration = now.AddSeconds(MOVEMENT_DURATION);
-                        downExpiration = DateTime.MinValue;
+                        device?.Up();
+                        lookReleaseTime = timeNow + MOVEMENT_DURATION;
                         break;
+
                     case "DOWN":
-                        downExpiration = now.AddSeconds(MOVEMENT_DURATION);
-                        upExpiration = DateTime.MinValue;
+                        device?.Down();
+                        lookReleaseTime = timeNow + MOVEMENT_DURATION;
                         break;
-                    case "JUMP": if (timeNow - lastJumpTime > 0.1f) { jumpExpiration = now.AddSeconds(0.15); lastJumpTime = timeNow; } break;
-                    case "ATTACK": if (timeNow - lastAttackTime > 0.25f) { attackExpiration = now.AddSeconds(TAP_DURATION); lastAttackTime = timeNow; } break;
-                    case "DASH": if (timeNow - lastDashTime > 0.4f) { dashExpiration = now.AddSeconds(TAP_DURATION); lastDashTime = timeNow; } break;
-                    case "SPELL": case "CAST": if (PlayerData.instance.MPCharge >= 33 && timeNow - lastCastTime > 0.3f) { castExpiration = now.AddSeconds(TAP_DURATION); lastCastTime = timeNow; } break;
+
+                    case "JUMP":
+                        device?.Jump();
+                        jumpReleaseTime = timeNow + 0.15f;
+                        break;
+
+                    case "ATTACK":
+                        device?.Attack();
+                        attackReleaseTime = timeNow + TAP_DURATION;
+                        break;
+
+                    case "DASH":
+                        device?.Dash();
+                        dashReleaseTime = timeNow + TAP_DURATION;
+                        break;
+
+                    case "SPELL":
+                    case "CAST":
+                        device?.Cast();
+                        castReleaseTime = timeNow + TAP_DURATION;
+                        break;
+
+                    case "IDLE":
+                        device?.Reset();
+                        ResetAllTimers();
+                        break;
                 }
             }
-            catch (Exception e) { DesktopLogger.LogError($"Exec Error: {e.Message}"); }
+            catch (Exception e)
+            {
+                DesktopLogger.LogError($"ExecuteAction error: {e.Message}");
+            }
         }
 
         public void Update()
         {
-            if (hero == null) hero = HeroController.instance;
-            if (hero == null) return;
+            if (hero == null)
+                hero = HeroController.instance;
+
+            if (hero == null)
+                return;
 
             if (!hero.acceptingInput || hero.cState.dead || hero.cState.transitioning)
             {
-                ReleaseAllKeys();
-                if (physicsOverride != null) physicsOverride.IsActive = false;
+                device?.Reset();
+                ResetAllTimers();
                 return;
             }
 
-            if (!actionsBindingComplete && deviceAttached) BindDeviceToHeroActions();
+            if (!actionsBindingComplete && deviceAttached)
+                BindDeviceToHeroActions();
 
-            DateTime now = DateTime.Now;
-            float dt = Time.deltaTime;
-            ulong tick = InputManager.CurrentTick;
+            // Auto-release degli input scaduti
+            float timeNow = Time.time;
 
-            bool wantLeft = now < leftExpiration;
-            bool wantRight = now < rightExpiration;
-            bool wantUp = now < upExpiration;
-            bool wantDown = now < downExpiration;
-            bool wantJump = now < jumpExpiration;
-            bool wantAttack = now < attackExpiration;
-            bool wantDash = now < dashExpiration;
-            bool wantCast = now < castExpiration;
+            if (timeNow > moveReleaseTime)
+                device?.StopLR();
 
-            if (wantLeft) wantRight = false;
+            if (timeNow > lookReleaseTime)
+                device?.StopUD();
 
-            if (deviceAttached && virtualDevice != null)
-            {
-                virtualDevice.LeftControl.UpdateWithState(wantLeft, tick, dt);
-                virtualDevice.RightControl.UpdateWithState(wantRight, tick, dt);
-                virtualDevice.UpControl.UpdateWithState(wantUp, tick, dt);
-                virtualDevice.DownControl.UpdateWithState(wantDown, tick, dt);
-                virtualDevice.JumpControl.UpdateWithState(wantJump, tick, dt);
-                virtualDevice.AttackControl.UpdateWithState(wantAttack, tick, dt);
-                virtualDevice.DashControl.UpdateWithState(wantDash, tick, dt);
-                virtualDevice.CastControl.UpdateWithState(wantCast, tick, dt);
-                virtualDevice.Commit(tick, dt);
-            }
+            if (timeNow > jumpReleaseTime)
+                device?.StopJump();
 
-            if (physicsOverride != null && !hero.cState.dashing && !hero.cState.recoiling)
-            {
-                physicsOverride.IsActive = true;
+            if (timeNow > attackReleaseTime)
+                device?.StopAttack();
 
-                bool isBusy = wantJump || wantDash || wantAttack || wantCast ||
-                              hero.cState.jumping || hero.cState.dashing || hero.cState.attacking;
+            if (timeNow > dashReleaseTime)
+                device?.StopDash();
 
-                if (wantLeft || wantRight || wantDown || wantUp || isBusy)
-                {
-                    idleWaitTimer = 0f;
-                }
-
-                // V43: Impostiamo i flag di sguardo nel PhysicsOverride
-                // Questo permette al LateUpdate di forzare l'animazione corretta
-                physicsOverride.IsLookingUp = wantUp && !isBusy && !wantLeft && !wantRight;
-                physicsOverride.IsLookingDown = wantDown && !isBusy && !wantLeft && !wantRight;
-
-                if (wantLeft)
-                {
-                    physicsOverride.TargetVelocityX = -RUN_SPEED;
-                    if (moveInputField != null) moveInputField.SetValue(hero, -1.0f);
-                    physicsOverride.LockVelocity = false;
-                    physicsOverride.ForceIdleAnim = false;
-                    hero.FaceLeft();
-                }
-                else if (wantRight)
-                {
-                    physicsOverride.TargetVelocityX = RUN_SPEED;
-                    if (moveInputField != null) moveInputField.SetValue(hero, 1.0f);
-                    physicsOverride.LockVelocity = false;
-                    physicsOverride.ForceIdleAnim = false;
-                    hero.FaceRight();
-                }
-                else
-                {
-                    physicsOverride.TargetVelocityX = 0f;
-                    if (moveInputField != null) moveInputField.SetValue(hero, 0.0f);
-
-                    if (hero.cState.onGround && !isBusy)
-                    {
-                        if (wantDown || wantUp)
-                        {
-                            physicsOverride.LockVelocity = true;
-                            // ForceIdleAnim deve essere falso se stiamo guardando su/giù!
-                            physicsOverride.ForceIdleAnim = false;
-                        }
-                        else
-                        {
-                            idleWaitTimer += dt;
-                            if (idleWaitTimer > IDLE_DELAY_THRESHOLD)
-                            {
-                                physicsOverride.LockVelocity = true;
-                                physicsOverride.ForceIdleAnim = true;
-                            }
-                            else
-                            {
-                                physicsOverride.LockVelocity = true;
-                                physicsOverride.ForceIdleAnim = false;
-                            }
-                        }
-                    }
-                    else
-                    {
-                        physicsOverride.LockVelocity = false;
-                        physicsOverride.ForceIdleAnim = false;
-                    }
-                }
-            }
-            else if (physicsOverride != null)
-            {
-                physicsOverride.IsActive = false;
-                physicsOverride.ForceIdleAnim = false;
-                physicsOverride.LockVelocity = false;
-                physicsOverride.IsLookingUp = false;
-                physicsOverride.IsLookingDown = false;
-            }
+            if (timeNow > castReleaseTime)
+                device?.StopCast();
         }
 
-        private void ReleaseAllKeys()
+        private void ResetAllTimers()
         {
-            leftExpiration = DateTime.MinValue;
-            rightExpiration = DateTime.MinValue;
-            upExpiration = DateTime.MinValue;
-            downExpiration = DateTime.MinValue;
+            jumpReleaseTime = 0f;
+            attackReleaseTime = 0f;
+            dashReleaseTime = 0f;
+            castReleaseTime = 0f;
+            moveReleaseTime = 0f;
+            lookReleaseTime = 0f;
         }
 
         public void DestroyDevice()
         {
-            if (virtualDevice != null && deviceAttached)
+            DesktopLogger.Log("ActionExecutor: Destroying device...");
+
+            if (device != null)
             {
-                InputManager.DetachDevice(virtualDevice);
-                virtualDevice = null;
-                deviceAttached = false;
-                actionsBindingComplete = false;
+                device.Reset();
+
+                if (deviceAttached)
+                {
+                    InputManager.DetachDevice(device);
+                    deviceAttached = false;
+                }
+
+                device = null;
             }
-            if (physicsOverride != null)
-            {
-                GameObject.Destroy(physicsOverride);
-                physicsOverride = null;
-            }
+
+            actionsBindingComplete = false;
+            DesktopLogger.Log("✓ Device destroyed");
         }
     }
 }
