@@ -6,10 +6,13 @@ from typing import Dict, Tuple, Optional, Any
 
 class HollowKnightEnv:
     """
-    Environment wrapper aggiornato (Anti-Camping & Aggressive).
+    Environment wrapper per Hollow Knight (Mantis Lords).
+    Gestisce la connessione TCP e il calcolo dei Reward basato sui dati della Mod.
+
+    NOTA: Richiede la Mod aggiornata che invia 'lastHazardType'.
     """
 
-    # DEFINIZIONE AZIONI BASE
+    # Mappatura Azioni (Non modificare se non cambi anche l'Agent)
     ACTIONS = {
         0: "MOVE_LEFT",
         1: "MOVE_RIGHT",
@@ -29,7 +32,6 @@ class HollowKnightEnv:
         timeout: float = 30.0,
         use_reward_shaping: bool = False,
     ):
-        """Initialize environment."""
         self.host = host
         self.port = port
         self.timeout = timeout
@@ -38,16 +40,17 @@ class HollowKnightEnv:
         self.connected = False
         self.use_reward_shaping = use_reward_shaping
 
-        # Tracking per calcolo differenze reward
+        # Variabili per calcolare le differenze (Delta) tra uno step e l'altro
         if use_reward_shaping:
             self.prev_boss_hp = None
             self.prev_player_hp = None
             self.prev_mantis_killed = 0
 
+        # Avvia connessione
         self._connect()
 
     def _connect(self):
-        """Establish TCP connection."""
+        """Stabilisce la connessione TCP con la Mod di Unity."""
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.settimeout(self.timeout)
@@ -57,9 +60,10 @@ class HollowKnightEnv:
             print(f"[Env] Connected to {self.host}:{self.port}")
         except Exception as e:
             print(f"[Env] Connection failed: {e}")
+            self.connected = False
 
     def _send_action(self, action_name: str):
-        """Send action to C# mod."""
+        """Invia la stringa dell'azione al socket."""
         try:
             if not self.socket:
                 return
@@ -71,9 +75,10 @@ class HollowKnightEnv:
             self._connect()
         except Exception as e:
             print(f"[Env] Error sending action: {e}")
+            self.connected = False
 
     def _receive_state(self) -> Optional[Dict]:
-        """Receive state JSON from C# mod."""
+        """Legge una riga dal socket e la converte da JSON a Dict."""
         try:
             if not self.socket_file:
                 return None
@@ -81,10 +86,7 @@ class HollowKnightEnv:
             if not line:
                 self.connected = False
                 return None
-            line = line.strip()
-            if not line:
-                return None
-            return json.loads(line)
+            return json.loads(line.strip())
         except json.JSONDecodeError as e:
             print(f"[Env] JSON decode error: {e}")
             return None
@@ -97,154 +99,100 @@ class HollowKnightEnv:
 
     def _compute_reward(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
         """
-        Reward shaping per combat contro Mantis Lords.
-
-        Filosofia del trade:
-        - Knight ha 9 HP, Boss ha ~300+ HP totali (3 Mantis Lords)
-        - Ogni colpo del Knight fa ~13 danni, quindi servono ~23 colpi per vincere
-        - Il Knight può subire max 9 colpi (1 danno ciascuno) prima di morire
-        - Quindi il ratio ideale è: 23 colpi dati / 9 colpi subiti = ~2.5:1
-        - Il reward deve incentivare questo trade favorevole
-
-        Danno da spuntoni:
-        - Gli spuntoni fanno 2 danni (doppio!)
-        - NON danno soul (non ricaricano heal)
-        - Sono completamente inutili e vanno evitati a tutti i costi
+        Calcola il reward basato sullo stato corrente.
+        Usa 'lastHazardType' dalla Mod per distinguere Spuntoni vs Boss.
         """
         reward = 0.0
         info = {"damage_taken": 0, "spike_damage": False, "damage_source": "none"}
 
+        # --- ESTRAZIONE DATI ---
         boss_hp = state.get("bossHealth", 100.0)
         player_hp = state.get("playerHealth", 9)
         mantis_killed = state.get("mantisLordsKilled", 0)
-
         dist_to_boss = state.get("distanceToBoss", 20.0)
         is_facing_boss = state.get("isFacingBoss", False)
 
-        # ============================================
-        # 1. REWARD PER DANNO AL BOSS
-        # ============================================
-        # Ogni colpo al boss è prezioso - il Knight deve colpire ~23 volte
+        # Dati specifici per il danno (Richiede Mod C# Aggiornata)
+        damage_taken_in_step = state.get("damageTaken", 0)
+        hazard_type = state.get("lastHazardType", 0)  # 0=None, 1=Enemy, 2=Env/Spike
+
+        # --- 1. ATTACCO (Hit Boss) ---
+        # Premia se abbiamo tolto vita al boss rispetto allo step precedente
         if self.prev_boss_hp is not None:
             boss_damage = self.prev_boss_hp - boss_hp
             if boss_damage > 0:
-                # Reward proporzionale: se il boss ha ~300 HP e noi 9,
-                # ogni nostro colpo vale ~3x di più in termini di "progresso"
-                reward += 2.5
+                reward += 1.0  # +1.0 Base Reward per colpo
 
-        # ============================================
-        # 2. REWARD PER DISTANZA OTTIMALE DAL BOSS
-        # ============================================
-        # Range nail in Hollow Knight: ~2.5 unità
-        # Distanza ideale: 2.5-4 unità (può colpire, può schivare)
-        # I Mantis Lords hanno attacchi a media distanza (dash, boomerang)
-
+        # --- 2. POSIZIONAMENTO (Spacing & Facing) ---
         proximity_reward = 0.0
 
-        if dist_to_boss < 2.5:
-            # RANGE DI ATTACCO PERFETTO - può colpire!
-            # Ma è anche pericoloso, quindi reward moderato
-            proximity_reward = 0.15
+        # Bonus costante se guardiamo il boss (fondamentale per colpire)
+        if is_facing_boss:
+            proximity_reward += 0.02
+
+        # Gestione Zone di Distanza
+        if dist_to_boss < 1.5:
+            # TROPPO VICINO (Crowding) -> Rischio collisione
+            proximity_reward -= 0.1
+        elif 1.5 <= dist_to_boss <= 3.5:
+            # SWEET SPOT (Range Aculeo) -> Ottimo
+            proximity_reward += 0.1
             if is_facing_boss:
-                proximity_reward += 0.1  # Bonus se guarda il boss
-        elif dist_to_boss < 4.5:
-            # RANGE OTTIMALE - può colpire e ha tempo di reagire
-            proximity_reward = 0.2
-            if is_facing_boss:
-                proximity_reward += 0.1
-        elif dist_to_boss < 8.0:
-            # Range medio - deve avvicinarsi
-            proximity_reward = 0.05
-            if is_facing_boss:
-                proximity_reward += 0.03
-        elif dist_to_boss < 15.0:
-            # Lontano - piccola penalità
-            proximity_reward = -0.05
-        else:
-            # Troppo lontano - sta scappando
-            proximity_reward = -0.15
+                proximity_reward += 0.05  # Bonus extra se pronto a colpire
+        elif dist_to_boss > 15.0:
+            # CAMPING (Troppo lontano) -> Inutile
+            proximity_reward -= 0.1
 
         reward += proximity_reward
 
-        # ============================================
-        # 3. PENALITÀ PER DANNO SUBITO
-        # ============================================
-        # Il Knight ha solo 9 HP - ogni danno conta molto!
-        # Ma il danno da boss/proiettili è "accettabile" se stiamo facendo danni
-        # Il danno da spuntoni è SEMPRE negativo (niente soul, niente progresso)
+        # --- 3. GESTIONE DANNI (Fonte Verificata da Unity) ---
+        # Se la mod ci dice che abbiamo preso danno in questo frame
+        if damage_taken_in_step > 0:
+            info["damage_taken"] = damage_taken_in_step
 
-        if self.prev_player_hp is not None:
-            player_damage = self.prev_player_hp - player_hp
-            if player_damage > 0:
-                info["damage_taken"] = player_damage
+            # HAZARD TYPE 2 = Danno Ambientale (Spuntoni, Acido, Lave)
+            if hazard_type == 2:
+                info["spike_damage"] = True
+                info["damage_source"] = "spikes"
+                reward -= 3.5  # Penalità Severa (Morte istantanea logica)
 
-                # Determina la fonte del danno
-                # In Hollow Knight, gli spuntoni fanno 2 danni, il boss fa 1
-                if player_damage >= 2:
-                    # Danno da SPUNTONI (2 danni) - MOLTO GRAVE
-                    # - Non dà soul
-                    # - È evitabile al 100%
-                    # - È un errore di posizionamento
-                    info["spike_damage"] = True
-                    info["damage_source"] = "spikes"
-                    # Penalità MOLTO alta: 2 HP persi = 22% della vita
-                    # + è danno "stupido" che non dà nulla in cambio
-                    reward -= 3.0
-                else:
-                    # Danno da BOSS/PROIETTILI (1 danno)
-                    # - Dà soul (può healare dopo)
-                    # - Fa parte del combat normale
-                    # - Accettabile se stiamo facendo danni
-                    info["damage_source"] = "boss"
-                    # Penalità moderata: 1 HP = 11% della vita
-                    # Ma se stiamo facendo trade favorevoli, è ok
-                    reward -= 0.8
+            # HAZARD TYPE 1 (o altro) = Nemico, Proiettile, Boss
+            else:
+                info["damage_source"] = "boss"
+                reward -= 2.0  # Penalità Standard (Combattimento)
 
-        # ============================================
-        # 4. MANTIS LORDS KILLED
-        # ============================================
-        # Uccidere un Mantis Lord è un grande traguardo
+        # --- 4. OBIETTIVI (Kill & Vittoria) ---
         if mantis_killed > self.prev_mantis_killed:
-            # Bonus scalato: più ne uccidi, più difficile diventa
-            # (nella fase 2 ci sono 2 Mantis contemporaneamente)
-            kill_bonus = 25.0 + (mantis_killed * 5.0)
-            reward += kill_bonus
+            reward += 10.0  # Bonus per aver ucciso una delle mantidi
             self.prev_mantis_killed = mantis_killed
 
-        # ============================================
-        # 5. EPISODIO TERMINATO
-        # ============================================
         if done:
             if state.get("isDead", False):
-                # Morte - penalità scalata in base ai progressi
-                # Se ha ucciso 2 Mantis ed è morto, non è così grave
-                death_penalty = -8.0 + (mantis_killed * 2.0)
-                reward += death_penalty
+                reward -= 5.0  # Penalità finale morte
             elif state.get("bossDefeated", False) or mantis_killed == 3:
-                # VITTORIA!
-                # Bonus extra se ha vinto con tanta vita
-                hp_bonus = player_hp * 2.0  # Fino a +18 se vita piena
-                reward += 100.0 + hp_bonus
+                reward += 50.0  # Grande bonus vittoria
 
-        # Update tracking
+        # Aggiornamento stato precedente
         self.prev_boss_hp = boss_hp
         self.prev_player_hp = player_hp
 
-        # Clip reward per stabilità training (range più ampio per eventi importanti)
-        reward = max(-10.0, min(10.0, reward))
+        # Clipping finale per stabilità numerica (-5.0 a +5.0 esclude solo i reward vittoria estremi)
+        reward = max(-5.0, min(5.0, reward))
 
         return reward, info
 
     def reset(self) -> Dict:
-        """Reset environment."""
+        """Resetta l'ambiente e attende un nuovo stato valido."""
         print("[Env] Reset - waiting for new episode...")
+
+        # Invia IDLE per sbloccare eventuali socket appesi
         self._send_action("IDLE")
 
         state = self._receive_state()
         attempts = 0
-        max_attempts = 20
 
-        while state is None and attempts < max_attempts:
+        # Riprova finché non ottiene uno stato valido
+        while state is None and attempts < 20:
             time.sleep(0.5)
             state = self._receive_state()
             attempts += 1
@@ -255,6 +203,7 @@ class HollowKnightEnv:
 
         print("[Env] ✓ Reset complete")
 
+        # Reset variabili reward shaping
         if self.use_reward_shaping:
             self.prev_boss_hp = state.get("bossHealth", 100.0)
             self.prev_player_hp = state.get("playerHealth", 5)
@@ -263,17 +212,17 @@ class HollowKnightEnv:
         return state
 
     def step(self, action: int) -> Tuple:
-        """Execute action."""
+        """
+        Esegue un'azione e restituisce (stato, reward, done, info).
+        """
         action_name = self.ACTIONS.get(action, "IDLE")
         self._send_action(action_name)
+
         state = self._receive_state()
 
+        # Gestione disconnessione o errore
         if state is None:
-            done = True
-            state = {}
-            if self.use_reward_shaping:
-                return state, -10.0, done, {"error": "Connection lost"}
-            return state, done, {"error": "Connection lost"}
+            return {}, 0, True, {"error": "Connection lost"}
 
         done = state.get("isDead", False) or state.get("bossDefeated", False)
         info = {"action_name": action_name}
@@ -283,10 +232,11 @@ class HollowKnightEnv:
             info.update(reward_info)
             return state, reward, done, info
         else:
-            return state, done, info
+            # Modalità senza reward shaping (solo test puro)
+            return state, 0.0, done, info
 
     def close(self):
-        """Close connection."""
+        """Chiude le risorse di rete."""
         if self.socket_file:
             try:
                 self.socket_file.close()
@@ -295,7 +245,6 @@ class HollowKnightEnv:
         if self.socket:
             try:
                 self.socket.close()
-                print("[Env] Connection closed")
             except Exception:
                 pass
         self.connected = False

@@ -23,6 +23,7 @@ namespace SyntheticSoulMod
         public bool facingRight;
         public int damageTaken;
         public float[] terrainInfo;
+        public int lastHazardType;
         public float bossX;
         public float bossY;
         public float bossHealth;
@@ -39,6 +40,7 @@ namespace SyntheticSoulMod
             terrainInfo = new float[5];
             nearbyHazards = new List<HazardInfo>();
             damageTaken = 0;
+            lastHazardType = 1;
             mantisLordsKilled = 0;
         }
     }
@@ -249,77 +251,161 @@ namespace SyntheticSoulMod
             return count;
         }
 
+        // Debug per hazard scan
+        private float lastFullScanTime = 0f;
+        private float lastHazardLogTime = 0f;
+
         private void ExtractHazards(HeroController hero, GameState state)
         {
             var playerPos = hero.transform.position;
             var hazards = new List<HazardInfo>();
 
-            // Usa OverlapCircle per efficienza
+            // ===============================================================
+            // DEBUG: Scan completo della scena ogni 10 secondi
+            // Questo ci mostra TUTTI gli oggetti che potrebbero essere spuntoni
+            // ===============================================================
+            if (Time.time - lastFullScanTime > 10.0f)
+            {
+                lastFullScanTime = Time.time;
+                DesktopLogger.Log("========== FULL HAZARD SCAN ==========");
+
+                // 1. Trova tutti gli oggetti con DamageHero
+                var allDamageHero = GameObject.FindObjectsOfType<DamageHero>();
+                DesktopLogger.Log($"[SCAN] Objects with DamageHero: {allDamageHero.Length}");
+                foreach (var dmg in allDamageHero)
+                {
+                    var obj = dmg.gameObject;
+                    float dist = Vector2.Distance(playerPos, obj.transform.position);
+                    if (dist < 25f)
+                    {
+                        var rb = obj.GetComponent<Rigidbody2D>();
+                        var col = obj.GetComponent<Collider2D>();
+                        string rbInfo = rb != null ? (rb.isKinematic ? "STATIC" : "MOVING") : "NO_RB";
+                        string colInfo = col != null ? (col.isTrigger ? "TRIGGER" : "SOLID") : "NO_COL";
+                        DesktopLogger.Log($"  [{rbInfo}][{colInfo}] {obj.name} | Layer={LayerMask.LayerToName(obj.layer)} | Dist={dist:F1}");
+                    }
+                }
+
+                // 2. Cerca specificamente nel layer "Interactive Object" o simili
+                DesktopLogger.Log("[SCAN] Checking all layers for damage zones...");
+                var allColliders = GameObject.FindObjectsOfType<Collider2D>();
+                foreach (var col in allColliders)
+                {
+                    string layerName = LayerMask.LayerToName(col.gameObject.layer);
+                    string objName = col.gameObject.name.ToLower();
+
+                    // Cerca oggetti che potrebbero essere spuntoni
+                    if (layerName.Contains("Hazard") || layerName.Contains("Damage") ||
+                        objName.Contains("spike") || objName.Contains("thorn") ||
+                        objName.Contains("hurt") || objName.Contains("damage") ||
+                        objName.Contains("kill") || objName.Contains("death"))
+                    {
+                        float dist = Vector2.Distance(playerPos, col.transform.position);
+                        if (dist < 20f)
+                        {
+                            DesktopLogger.Log($"  [POTENTIAL SPIKE] {col.gameObject.name} | Layer={layerName} | Trigger={col.isTrigger} | Dist={dist:F1}");
+                        }
+                    }
+                }
+                DesktopLogger.Log("========== END SCAN ==========");
+            }
+
+            // ===============================================================
+            // Rilevamento hazard normale
+            // ===============================================================
+            // Usa OverlapCircleAll CON tutti i layer (non filtrato)
             Collider2D[] hits = Physics2D.OverlapCircleAll(playerPos, HAZARD_DETECTION_RADIUS);
+
+            bool shouldLog = (Time.time - lastHazardLogTime > 2.0f);
 
             foreach (var hit in hits)
             {
                 if (hazards.Count >= MAX_HAZARDS * 2) break;
 
                 string name = hit.name.ToLower();
-                string hazardType = "hazard";
+                string hazardType = "unknown";
+                bool isSpike = false;
+                bool isProjectile = false;
+                bool isEnemy = false;
 
-                // Rileva spuntoni (spikes) in vari modi
-                bool isSpike = name.Contains("spike") ||
-                              name.Contains("thorn") ||
-                              name.Contains("hazard") ||
-                              hit.gameObject.tag == "Spike" ||
-                              hit.gameObject.layer == LayerMask.NameToLayer("Terrain") && name.Contains("damage");
-
-                // Controlla se ha il componente DamageHero (spuntoni e zone di danno)
+                var rb = hit.GetComponent<Rigidbody2D>();
                 var damageHero = hit.GetComponent<DamageHero>();
-                if (damageHero != null)
+                bool isStatic = (rb == null) || rb.isKinematic || (rb.velocity.magnitude < 0.1f);
+
+                // ============================================
+                // RILEVAMENTO SPUNTONI
+                // ============================================
+                // Metodo 1: Ha DamageHero ed è statico
+                if (damageHero != null && isStatic)
                 {
                     isSpike = true;
                     hazardType = "spike";
                 }
 
-                // Rileva proiettili e attacchi boss
-                bool isProjectile = name.Contains("shot") || name.Contains("scythe") ||
-                                   name.Contains("boomerang") || name.Contains("projectile") ||
-                                   name.Contains("slash");
-
-                // Rileva nemici (escludi boss sui troni)
-                bool isEnemy = hit.gameObject.layer == LayerMask.NameToLayer("Enemies");
-
-                // Se è un nemico ma è "Mantis Lord" ed è molto in alto (> player + 5 unità), ignoralo (è sul trono)
-                if (name.Contains("mantis") && hit.transform.position.y > playerPos.y + 5.0f)
+                // Metodo 2: Nome contiene parole chiave spuntoni
+                if (name.Contains("spike") || name.Contains("thorn") || name.Contains("spikes") ||
+                    name.Contains("hurt") || name.Contains("dvl_dmg"))
                 {
-                    continue;
+                    isSpike = true;
+                    hazardType = "spike";
+                }
+
+                // Metodo 3: Layer è "Hazard" o simile
+                string layerName = LayerMask.LayerToName(hit.gameObject.layer);
+                if (layerName.Contains("Hazard") || layerName.Contains("Damage"))
+                {
+                    isSpike = true;
+                    hazardType = "spike";
+                }
+
+                // ============================================
+                // RILEVAMENTO PROIETTILI (si muovono!)
+                // ============================================
+                if (name.Contains("shot") || name.Contains("scythe") ||
+                    name.Contains("boomerang") || name.Contains("projectile") ||
+                    name.Contains("slash") || name.Contains("disc"))
+                {
+                    isProjectile = true;
+                    hazardType = "projectile";
+                }
+                // Ha DamageHero ma si muove = proiettile
+                else if (damageHero != null && !isStatic)
+                {
+                    isProjectile = true;
+                    hazardType = "projectile";
+                }
+
+                // ============================================
+                // RILEVAMENTO NEMICI
+                // ============================================
+                if (hit.gameObject.layer == LayerMask.NameToLayer("Enemies"))
+                {
+                    // Ignora Mantis Lords sui troni
+                    if (name.Contains("mantis") && hit.transform.position.y > playerPos.y + 5.0f)
+                    {
+                        continue;
+                    }
+                    if (!isSpike && !isProjectile)
+                    {
+                        isEnemy = true;
+                        hazardType = "enemy";
+                    }
                 }
 
                 bool isThreat = isSpike || isProjectile || isEnemy;
 
                 if (isThreat)
                 {
-                    // Se è uno spike, assicurati che il tipo sia "spike"
-                    if (isSpike)
-                    {
-                        hazardType = "spike";
-                    }
-                    else if (isProjectile)
-                    {
-                        hazardType = "projectile";
-                    }
-                    else
-                    {
-                        hazardType = "enemy";
-                    }
+                    float dist = Vector2.Distance(playerPos, hit.transform.position);
 
                     var hInfo = new HazardInfo
                     {
                         type = hazardType,
                         relX = hit.transform.position.x - playerPos.x,
                         relY = hit.transform.position.y - playerPos.y,
-                        distance = Vector2.Distance(playerPos, hit.transform.position)
+                        distance = dist
                     };
 
-                    var rb = hit.GetComponent<Rigidbody2D>();
                     if (rb != null)
                     {
                         hInfo.velocityX = rb.velocity.x;
@@ -327,7 +413,22 @@ namespace SyntheticSoulMod
                     }
 
                     hazards.Add(hInfo);
+
+                    // Log hazard vicini
+                    if (shouldLog && dist < 5.0f)
+                    {
+                        DesktopLogger.Log($"[HAZARD] {hit.name} | Type={hazardType} | Dist={dist:F2} | Static={isStatic}");
+                    }
                 }
+            }
+
+            if (shouldLog && hazards.Count > 0)
+            {
+                lastHazardLogTime = Time.time;
+                int spikes = hazards.Count(h => h.type == "spike");
+                int projectiles = hazards.Count(h => h.type == "projectile");
+                int enemies = hazards.Count(h => h.type == "enemy");
+                DesktopLogger.Log($"[HAZARD TOTAL] Spikes={spikes} Projectiles={projectiles} Enemies={enemies}");
             }
 
             state.nearbyHazards = hazards.OrderBy(h => h.distance).Take(MAX_HAZARDS * 2).ToList();

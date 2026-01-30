@@ -18,7 +18,6 @@ namespace SyntheticSoulMod
         private ActionExecutor actionExecutor;
         private bool isTraining = false;
         private HeroController hero;
-
         private const int DEFAULT_PORT = 5555;
         private int PORT;
         private const float UPDATE_INTERVAL = 0.05f;
@@ -26,12 +25,12 @@ namespace SyntheticSoulMod
         private bool wasConnected = false;
 
         // ============ TRAINING SPEED ============
-        private const float TRAINING_TIMESCALE = 2.0f;  // Velocità 2x durante training
+        private const float TRAINING_TIMESCALE = 2.0f;
         private bool trainingSpeedActive = false;
         private bool autoSpawnTriggered = false;
-        private float originalFixedDeltaTime = 0.02f;  // Default Unity physics timestep
+        private float originalFixedDeltaTime = 0.02f;
         private float lastTimeScaleCheck = 0f;
-        private const float TIMESCALE_CHECK_INTERVAL = 0.1f;  // Controlla ogni 100ms
+        private const float TIMESCALE_CHECK_INTERVAL = 0.1f;
 
         // ============ SCENE STATE VARIABLES ============
         private string currentScene = "";
@@ -47,6 +46,11 @@ namespace SyntheticSoulMod
 
         // ============ DAMAGE ACCUMULATOR ============
         private int damageTakenSinceLastUpdate = 0;
+
+        // --- AGGIUNTA NUOVA ---
+        private int lastHazardTypeDetected = 0;
+        // ---------------------
+
         private readonly object damageLock = new object();
 
         // ============ RELOAD SAFETY ============
@@ -74,23 +78,18 @@ namespace SyntheticSoulMod
             Log("Initializing SyntheticSoul Mod v9.4.0 (AUTO-SPAWN + 2X SPEED)...");
             DesktopLogger.Log("=== SYNTHETIC SOUL MOD v9.4.0 - AUTO-SPAWN + 2X SPEED ===");
 
-            // Leggi la porta da file di configurazione per supporto multi-istanza
             PORT = DEFAULT_PORT;
             try
             {
-                // Cerca il file nella directory del gioco
-                // DLL è in: hollow_knight_Data/Managed/Mods/SyntheticSoulMod/SyntheticSoulMod.dll
-                // Dobbiamo risalire a: HK_Instance_X/synthetic_soul_port.txt
                 string gameDir = System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
                 DesktopLogger.Log($"[Config] DLL location: {gameDir}");
 
-                // Prova diverse posizioni (risali 4 livelli per DLL in sottocartella)
                 string[] possiblePaths = new string[]
                 {
-                    System.IO.Path.Combine(gameDir, "..", "..", "..", "..", "synthetic_soul_port.txt"),  // 4 livelli su
-                    System.IO.Path.Combine(gameDir, "..", "..", "..", "synthetic_soul_port.txt"),        // 3 livelli su
-                    System.IO.Path.Combine(gameDir, "..", "..", "synthetic_soul_port.txt"),              // 2 livelli su
-                    System.IO.Path.Combine(gameDir, "..", "synthetic_soul_port.txt"),                    // 1 livello su
+                    System.IO.Path.Combine(gameDir, "..", "..", "..", "..", "synthetic_soul_port.txt"),
+                    System.IO.Path.Combine(gameDir, "..", "..", "..", "synthetic_soul_port.txt"),
+                    System.IO.Path.Combine(gameDir, "..", "..", "synthetic_soul_port.txt"),
+                    System.IO.Path.Combine(gameDir, "..", "synthetic_soul_port.txt"),
                     System.IO.Path.Combine(gameDir, "synthetic_soul_port.txt"),
                     "synthetic_soul_port.txt"
                 };
@@ -119,7 +118,6 @@ namespace SyntheticSoulMod
                     }
                 }
 
-                // Fallback: prova variabile d'ambiente
                 if (PORT == DEFAULT_PORT)
                 {
                     string portEnv = Environment.GetEnvironmentVariable("SYNTHETIC_SOUL_PORT");
@@ -166,9 +164,7 @@ namespace SyntheticSoulMod
                 DesktopLogger.LogError($"Server start failed: {e.Message}\n{e.StackTrace}");
             }
 
-            // Salva il fixedDeltaTime originale
             originalFixedDeltaTime = Time.fixedDeltaTime;
-
             Log("SyntheticSoul Mod ready!");
             DesktopLogger.Log("✓ Boss FSM monitoring active");
             DesktopLogger.Log("✓ Mantis Lords multi-kill tracking enabled");
@@ -178,7 +174,6 @@ namespace SyntheticSoulMod
             DesktopLogger.Log("✓ Auto-spawn to GG_Mantis_Lords on connect");
         }
 
-        // ============ SAFE TIMESCALE SETTER ============
         private void SetTrainingSpeed(bool enable)
         {
             if (enable)
@@ -186,23 +181,12 @@ namespace SyntheticSoulMod
                 if (!trainingSpeedActive)
                 {
                     trainingSpeedActive = true;
-                    // Salva il fixedDeltaTime originale se non già salvato
                     if (originalFixedDeltaTime <= 0f)
                         originalFixedDeltaTime = Time.fixedDeltaTime;
+
+                    Time.timeScale = TRAINING_TIMESCALE;
+                    DesktopLogger.Log($"[Speed] TimeScale = {TRAINING_TIMESCALE}x, FixedDeltaTime = {Time.fixedDeltaTime}");
                 }
-
-                // Imposta timeScale
-                Time.timeScale = TRAINING_TIMESCALE;
-
-                // CRITICO: Adatta fixedDeltaTime per mantenere la fisica stabile
-                // La fisica di Unity usa fixedDeltaTime per i calcoli
-                // Se timeScale = 2x e fixedDeltaTime rimane 0.02, la fisica fa 2x update
-                // Per mantenere la stessa "sensazione" di fisica, NON modifichiamo fixedDeltaTime
-                // Questo significa che la fisica farà 2x step per secondo = gioco 2x più veloce
-                // Se la fisica sembra "strana", decommentare la linea sotto:
-                // Time.fixedDeltaTime = originalFixedDeltaTime * TRAINING_TIMESCALE;
-
-                DesktopLogger.Log($"[Speed] TimeScale = {TRAINING_TIMESCALE}x, FixedDeltaTime = {Time.fixedDeltaTime}");
             }
             else
             {
@@ -216,22 +200,16 @@ namespace SyntheticSoulMod
             }
         }
 
-        // ============ FORCE TIMESCALE (chiamato frequentemente) ============
         private void EnforceTrainingSpeed()
         {
             if (!trainingSpeedActive) return;
             if (communicator == null || !communicator.IsConnected) return;
 
-            // Il gioco potrebbe resettare timeScale (pause, scene change, etc.)
-            // Forziamo il valore corretto
             if (Math.Abs(Time.timeScale - TRAINING_TIMESCALE) > 0.01f)
             {
                 Time.timeScale = TRAINING_TIMESCALE;
-                // Non logghiamo ogni volta per evitare spam
             }
         }
-
-        // ============ SCENE TRACKING ============
         private void OnSceneChanged(Scene from, Scene to)
         {
             if (sceneChangeHandled)
@@ -241,7 +219,6 @@ namespace SyntheticSoulMod
 
             sceneChangeHandled = true;
 
-            // Mantieni TimeScale 2x se training è attivo
             if (trainingSpeedActive && communicator != null && communicator.IsConnected)
             {
                 SetTrainingSpeed(true);
@@ -249,14 +226,11 @@ namespace SyntheticSoulMod
             }
             else if (trainingSpeedActive)
             {
-                // Era attivo ma non più connesso
                 SetTrainingSpeed(false);
             }
 
             currentScene = to.name;
             episodeEnded = false;
-
-            // Reset contatore Mantis Lords
             mantisLordsKilled = 0;
             killedMantisIds.Clear();
             stateExtractor?.ResetTracking();
@@ -273,7 +247,6 @@ namespace SyntheticSoulMod
 
                 if (isReloading)
                 {
-                    // NON bloccare qui - StartCoroutine gestirà il timing
                     GameManager.instance.StartCoroutine(RestoreHeroAfterReload());
                 }
             }
@@ -292,21 +265,17 @@ namespace SyntheticSoulMod
             sceneChangeHandled = false;
         }
 
-        // ============ RESTORE HERO (WAIT FOR NATURAL SEQUENCE + BOSS FSM) ============
         private IEnumerator RestoreHeroAfterReload()
         {
             DesktopLogger.Log("[Restore] ═══════════════════════════════════════");
             DesktopLogger.Log("[Restore] ═══ SCENE RESTORATION v9.3.0 ═══");
             DesktopLogger.Log("[Restore] ═══════════════════════════════════════");
 
-            // STEP 1: BLOCCA DANNI IMMEDIATAMENTE
             ignoreDamageUntilReady = true;
             DesktopLogger.Log("[Restore] Damage tracking DISABLED");
 
-            // STEP 2: Aspetta che la scena inizi a caricarsi
             yield return new WaitForSeconds(0.1f);
 
-            // STEP 3: ATTENDI HERO SPAWN
             float timeout = 0f;
             while (HeroController.instance == null && timeout < 3f)
             {
@@ -325,12 +294,10 @@ namespace SyntheticSoulMod
             var hero = HeroController.instance;
             DesktopLogger.Log($"[Restore] ✓ Hero found: {hero.gameObject.name}");
 
-            // STEP 4: Pulisci duplicati e oggetti di morte SENZA toccare l'hero corrente
             yield return new WaitForSeconds(0.05f);
             CleanupDuplicateHeroesOnly();
             CleanupDeathObjects();
 
-            // STEP 5: ASPETTA CHE L'ANIMAZIONE DI ENTRATA FINISCA
             DesktopLogger.Log("[Restore] Waiting for Knight entrance animation to complete...");
             timeout = 0f;
             while (hero.cState.transitioning && timeout < 6f)
@@ -341,18 +308,15 @@ namespace SyntheticSoulMod
 
             DesktopLogger.Log($"[Restore] Transition complete. Hero transitioning: {hero.cState.transitioning}");
 
-            // STEP 6: ASPETTA UN FRAME EXTRA PER IL POSIZIONAMENTO FINALE
             yield return new WaitForEndOfFrame();
             yield return new WaitForSeconds(0.1f);
 
-            // STEP 7: TROVA E MONITORA LA FSM DEL BOSS
             PlayMakerFSM bossFSM = FindBossFSM();
             if (bossFSM != null)
             {
                 DesktopLogger.Log($"[Restore] Boss FSM found: {bossFSM.gameObject.name} - FSM: {bossFSM.FsmName}");
                 DesktopLogger.Log($"[Restore] Current boss state: {bossFSM.ActiveStateName}");
 
-                // Aspetta che il boss completi l'intro
                 timeout = 0f;
                 string previousState = bossFSM.ActiveStateName;
                 bool bossIntroStarted = false;
@@ -386,7 +350,6 @@ namespace SyntheticSoulMod
                 yield return new WaitForSeconds(2.5f);
             }
 
-            // STEP 8: ORA possiamo resettare la salute
             DesktopLogger.Log("[Restore] Setting hero health...");
             var pd = PlayerData.instance;
             if (pd != null)
@@ -405,7 +368,6 @@ namespace SyntheticSoulMod
                 DesktopLogger.Log("[Reset] Cleared dead flag");
             }
 
-            // Reset visuals
             var spriteRenderer = hero.GetComponent<SpriteRenderer>();
             if (spriteRenderer != null)
             {
@@ -413,7 +375,6 @@ namespace SyntheticSoulMod
                 spriteRenderer.color = Color.white;
             }
 
-            // STEP 9: Verifica controllo input
             if (!hero.acceptingInput)
             {
                 DesktopLogger.Log("[Restore] ⚠ Forcing input control...");
@@ -432,7 +393,6 @@ namespace SyntheticSoulMod
                 DesktopLogger.Log("[Restore] ✓ Hero already has input control");
             }
 
-            // STEP 10: RIATTIVA DANNI
             yield return new WaitForSeconds(0.2f);
             ignoreDamageUntilReady = false;
             DesktopLogger.Log("[Restore] Damage tracking ENABLED");
@@ -440,6 +400,10 @@ namespace SyntheticSoulMod
             lock (damageLock)
             {
                 damageTakenSinceLastUpdate = 0;
+
+                // --- AGGIUNTA NUOVA ---
+                lastHazardTypeDetected = 0;
+                // ---------------------
             }
 
             yield return new WaitForSeconds(0.1f);
@@ -454,7 +418,6 @@ namespace SyntheticSoulMod
             DesktopLogger.Log("[Restore] ═══════════════════════════════════════");
         }
 
-        // ============ TROVA LA FSM DEL BOSS NELLA SCENA ============
         private PlayMakerFSM FindBossFSM()
         {
             try
@@ -523,17 +486,14 @@ namespace SyntheticSoulMod
                    state == "start";
         }
 
-        // ============ AUTO-SPAWN TO MANTIS LORDS ARENA ============
         private IEnumerator AutoSpawnToMantisArena()
         {
             DesktopLogger.Log("[AutoSpawn] ═══════════════════════════════════════");
             DesktopLogger.Log("[AutoSpawn] ═══ TELEPORTING TO MANTIS LORDS ═══");
             DesktopLogger.Log("[AutoSpawn] ═══════════════════════════════════════");
 
-            // Aspetta che il gioco sia pronto
             yield return new WaitForSeconds(0.5f);
 
-            // Verifica che GameManager sia disponibile
             if (GameManager.instance == null)
             {
                 DesktopLogger.LogError("[AutoSpawn] GameManager not available!");
@@ -541,7 +501,6 @@ namespace SyntheticSoulMod
                 yield break;
             }
 
-            // Prepara PlayerData per evitare problemi con bench respawn
             var pd = PlayerData.instance;
             if (pd != null)
             {
@@ -550,23 +509,16 @@ namespace SyntheticSoulMod
                 DesktopLogger.Log("[AutoSpawn] PlayerData configured for boss rush");
             }
 
-            // Imposta il reload flag
             isReloading = true;
             ignoreDamageUntilReady = true;
-
-            // Mantieni TimeScale 2x durante il caricamento
             SetTrainingSpeed(true);
-
             DesktopLogger.Log("[AutoSpawn] Loading GG_Mantis_Lords...");
 
-            // Carica la scena dell'arena Mantis Lords
             sceneChangeHandled = false;
             UnityEngine.SceneManagement.SceneManager.LoadScene("GG_Mantis_Lords");
-
             DesktopLogger.Log("[AutoSpawn] Scene load initiated!");
         }
 
-        // ============ CLEANUP ============
         private void CleanupDuplicateHeroesOnly()
         {
             try
@@ -608,13 +560,9 @@ namespace SyntheticSoulMod
                 }
 
                 if (cleaned > 0)
-                {
                     DesktopLogger.Log($"[Cleanup] ✓ Removed {cleaned} duplicate(s)");
-                }
                 else
-                {
                     DesktopLogger.Log("[Cleanup] ✓ No duplicates found");
-                }
             }
             catch (Exception e)
             {
@@ -687,7 +635,6 @@ namespace SyntheticSoulMod
             }
         }
 
-        // ============ DEATH HANDLER ============
         private IEnumerator OnHeroDeath(On.HeroController.orig_Die orig, HeroController self)
         {
             if (ignoreDamageUntilReady || isReloading)
@@ -709,21 +656,29 @@ namespace SyntheticSoulMod
             }
         }
 
-        // ============ HANDLE CLEAN RELOAD (MODIFIED) ============
         private IEnumerator HandleCleanReload(bool isDeath)
         {
             isReloading = true;
             ignoreDamageUntilReady = true;
 
-            // Invia stato finale
             var gameState = stateExtractor?.ExtractState();
             if (gameState != null)
             {
                 lock (damageLock)
                 {
                     gameState.damageTaken = damageTakenSinceLastUpdate;
+
+                    // --- AGGIUNTA NUOVA ---
+                    gameState.lastHazardType = lastHazardTypeDetected;
+                    // ---------------------
+
                     damageTakenSinceLastUpdate = 0;
+
+                    // --- AGGIUNTA NUOVA ---
+                    lastHazardTypeDetected = 0;
+                    // ---------------------
                 }
+
                 gameState.isDead = isDeath;
                 gameState.bossDefeated = !isDeath;
                 communicator?.SendState(gameState);
@@ -732,7 +687,6 @@ namespace SyntheticSoulMod
             yield return new WaitForSeconds(0.2f);
             DesktopLogger.Log("[Reload] ═══ RELOADING SCENE ═══");
 
-            // Mantieni TimeScale 2x se training è attivo
             if (trainingSpeedActive && communicator != null && communicator.IsConnected)
             {
                 SetTrainingSpeed(true);
@@ -743,7 +697,6 @@ namespace SyntheticSoulMod
                 SetTrainingSpeed(false);
             }
 
-            // Ricarica la scena corrente se è una boss arena
             string currentSceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
             string sceneToLoad = currentSceneName;
 
@@ -759,7 +712,6 @@ namespace SyntheticSoulMod
                 DesktopLogger.Log($"[Reload] Reloading: {sceneToLoad}");
             }
 
-            // Prepara PlayerData per evitare bench respawn
             var pd = PlayerData.instance;
             if (pd != null)
             {
@@ -771,7 +723,6 @@ namespace SyntheticSoulMod
             UnityEngine.SceneManagement.SceneManager.LoadScene(sceneToLoad);
         }
 
-        // ============ BOSS DEATH HANDLER WITH MANTIS LORDS TRACKING ============
         private void OnHealthManagerDie(On.HealthManager.orig_Die orig, HealthManager self,
             float? attackDirection, AttackTypes attackType, bool ignoreEvasion)
         {
@@ -779,12 +730,10 @@ namespace SyntheticSoulMod
 
             if (isTraining && !episodeEnded && isInBossArena && !isReloading && IsBossEnemy(self.gameObject))
             {
-                // Gestione speciale per Mantis Lords
                 if (currentScene == "GG_Mantis_Lords")
                 {
                     int mantisId = self.gameObject.GetInstanceID();
 
-                    // Evita conteggi duplicati
                     if (killedMantisIds.Contains(mantisId))
                         return;
 
@@ -792,7 +741,6 @@ namespace SyntheticSoulMod
                     mantisLordsKilled++;
                     DesktopLogger.Log($"[Victory] Mantis Lord defeated ({mantisLordsKilled}/3)");
 
-                    // Solo dopo aver ucciso tutte e 3 le mantidi, resetta
                     if (mantisLordsKilled >= 3)
                     {
                         DesktopLogger.Log("[Victory] All Mantis Lords defeated - initiating reload");
@@ -802,7 +750,6 @@ namespace SyntheticSoulMod
                 }
                 else
                 {
-                    // Per altri boss, comportamento normale
                     episodeEnded = true;
                     DesktopLogger.Log("[Victory] Boss defeated");
                     GameManager.instance.StartCoroutine(HandleCleanReload(isDeath: false));
@@ -810,6 +757,7 @@ namespace SyntheticSoulMod
             }
         }
 
+        // ============ MODIFICA CRITICA: OnTakeDamage con hazardType ============
         private int OnTakeDamage(int hazardType, int damage)
         {
             if (ignoreDamageUntilReady || isReloading)
@@ -820,6 +768,12 @@ namespace SyntheticSoulMod
             lock (damageLock)
             {
                 damageTakenSinceLastUpdate += damage;
+
+                // --- AGGIUNTA NUOVA ---
+                // Salviamo il tipo di pericolo comunicato dal gioco
+                // 1 = Normal/Enemy, 2 = Spikes/Acid/Environmental
+                lastHazardTypeDetected = hazardType;
+                // ---------------------
             }
 
             return damage;
@@ -889,7 +843,6 @@ namespace SyntheticSoulMod
 
                     actionExecutor = new ActionExecutor();
 
-                    // ============ AUTO-SPAWN TO MANTIS LORDS ============
                     if (!autoSpawnTriggered && currentScene != "GG_Mantis_Lords")
                     {
                         autoSpawnTriggered = true;
@@ -897,18 +850,17 @@ namespace SyntheticSoulMod
                         GameManager.instance.StartCoroutine(AutoSpawnToMantisArena());
                     }
 
-                    // ============ ATTIVA VELOCITÀ 2X ============
                     SetTrainingSpeed(true);
                 }
                 else
                 {
                     Log("[SyntheticSoul] ✗ Python agent disconnected");
+
                     if (actionExecutor != null)
                     {
                         actionExecutor.DestroyDevice();
                     }
 
-                    // ============ RIPRISTINA VELOCITÀ NORMALE ============
                     SetTrainingSpeed(false);
                 }
 
@@ -921,9 +873,6 @@ namespace SyntheticSoulMod
             if (actionExecutor != null)
                 actionExecutor.Update();
 
-            // ============ ENFORCE TRAINING SPEED ============
-            // Il gioco può resettare Time.timeScale in vari punti
-            // Questo lo forza di nuovo al valore corretto
             lastTimeScaleCheck += Time.unscaledDeltaTime;
             if (lastTimeScaleCheck >= TIMESCALE_CHECK_INTERVAL)
             {
@@ -931,8 +880,6 @@ namespace SyntheticSoulMod
                 EnforceTrainingSpeed();
             }
 
-            // Usa unscaledDeltaTime per mantenere frequenza costante indipendente da TimeScale
-            // Questo garantisce ~20 Hz di comunicazione con Python anche a 2x
             timeSinceLastUpdate += Time.unscaledDeltaTime;
             if (timeSinceLastUpdate >= UPDATE_INTERVAL)
             {
@@ -941,6 +888,7 @@ namespace SyntheticSoulMod
             }
         }
 
+        // ============ MODIFICA CRITICA: ProcessAIStep con lastHazardType ============
         private void ProcessAIStep()
         {
             try
@@ -957,15 +905,23 @@ namespace SyntheticSoulMod
                 if (hero.cState.transitioning || !hero.acceptingInput)
                     return;
 
-                // Estrai stato anche se NON in boss arena (per test movement)
                 var gameState = stateExtractor.ExtractState();
+
                 lock (damageLock)
                 {
                     gameState.damageTaken = damageTakenSinceLastUpdate;
+
+                    // --- AGGIUNTA NUOVA ---
+                    gameState.lastHazardType = lastHazardTypeDetected;
+
+                    // Reset dopo l'invio
                     damageTakenSinceLastUpdate = 0;
+                    lastHazardTypeDetected = 0; // Reset a 0, non a 1
+                    // ---------------------
                 }
 
                 communicator.SendState(gameState);
+
                 string action = communicator.ReceiveAction();
 
                 bool canExecute = hero != null &&
