@@ -1,7 +1,6 @@
 import os
 import sys
 import subprocess
-import math
 import numpy as np
 from datetime import datetime
 import torch
@@ -67,97 +66,60 @@ def auto_generate_plots(
 
 def preprocess_state(state_dict):
     """
-    Converte il JSON della Mod in un array NumPy normalizzato per la Rete Neurale.
-    Include gestione robusta di liste vuote e normalizzazione.
+    ENHANCED STATE (26 features) - Combat-focused.
+    Allineato con lo stato PPO per consistenza.
     """
     features = []
 
-    # 1. PLAYER FEATURES (10)
-    player_x = state_dict.get("playerX", 0.0)
-    player_y = state_dict.get("playerY", 0.0)
-
-    # Normalizzazione basata su coordinate approssimative dell'arena Mantis
-    features.append(player_x / 40.0)
-    features.append(player_y / 30.0)
-
-    features.append(np.clip(state_dict.get("playerVelocityX", 0.0) / 15.0, -1.0, 1.0))
-    features.append(np.clip(state_dict.get("playerVelocityY", 0.0) / 15.0, -1.0, 1.0))
+    # Player basics (5) - Status + soul
     features.append(state_dict.get("playerHealth", 0) / 10.0)
     features.append(state_dict.get("playerSoul", 0) / 100.0)
-
-    # Booleani convertiti in float
     features.append(float(state_dict.get("canDash", False)))
     features.append(float(state_dict.get("canAttack", False)))
     features.append(float(state_dict.get("isGrounded", False)))
-    features.append(float(state_dict.get("hasDoubleJump", False)))
 
-    # 2. TERRAIN INFO (5) - Muri e Soffitti
-    terrain_info = state_dict.get("terrainInfo", [1.0, 1.0, 1.0, 1.0, 1.0])
+    # Player velocity (2)
+    features.append(np.clip(state_dict.get("playerVelocityX", 0.0) / 20.0, -1.0, 1.0))
+    features.append(np.clip(state_dict.get("playerVelocityY", 0.0) / 20.0, -1.0, 1.0))
+
+    # Terrain (5) - raycasts
+    terrain_info = state_dict.get("terrainInfo", [1.0] * 5)
     if not terrain_info or len(terrain_info) < 5:
         terrain_info = [1.0] * 5
     features.extend(terrain_info[:5])
 
-    # 3. BOSS FEATURES (7)
-    boss_x = state_dict.get("bossX", 0.0)
-    boss_y = state_dict.get("bossY", 0.0)
+    # Boss position (4)
+    boss_rel_x = state_dict.get("bossRelativeX", 0.0)
+    boss_rel_y = state_dict.get("bossRelativeY", 0.0)
+    distance = state_dict.get("distanceToBoss", 50.0) / 50.0
+    facing_boss = float(state_dict.get("isFacingBoss", False))
 
-    # Posizione relativa (più importante delle coordinate assolute)
-    boss_relative_x = (boss_x - player_x) / 40.0
-    boss_relative_y = (boss_y - player_y) / 30.0
-    features.append(boss_relative_x)
-    features.append(boss_relative_y)
+    features.append(np.clip(boss_rel_x / 30.0, -1.0, 1.0))
+    features.append(np.clip(boss_rel_y / 30.0, -1.0, 1.0))
+    features.append(np.clip(distance, 0.0, 1.0))
+    features.append(facing_boss)
 
-    features.append(state_dict.get("bossHealth", 0) / 1000.0)
+    # Boss velocity (2)
+    features.append(np.clip(state_dict.get("bossVelocityX", 0.0) / 20.0, -1.0, 1.0))
+    features.append(np.clip(state_dict.get("bossVelocityY", 0.0) / 20.0, -1.0, 1.0))
 
-    distance_to_boss = state_dict.get("distanceToBoss", 50.0)
-    features.append(np.clip(distance_to_boss / 50.0, 0.0, 1.0))
+    # Boss health (1)
+    features.append(state_dict.get("bossHealth", 100.0) / 100.0)
 
-    # Angolo verso il boss
-    angle_to_boss = math.atan2(boss_relative_y, boss_relative_x) / math.pi
-    features.append(angle_to_boss)
+    # Mantis killed (1)
+    features.append(state_dict.get("mantisLordsKilled", 0) / 3.0)
 
-    features.append(float(state_dict.get("isFacingBoss", False)))
-
-    boss_vel_x = state_dict.get("bossVelocityX", 0.0)
-    features.append(np.clip(boss_vel_x / 15.0, -1.0, 1.0))
-
-    # Salviamo dati grezzi nel dict per debug (non usati dalla rete)
-    state_dict["bossRelativeX"] = boss_relative_x
-    state_dict["bossRelativeY"] = boss_relative_y
-
-    # 4. HAZARDS (Top 3 pericoli più vicini)
+    # Hazards (5) - Il più vicino
     hazards = state_dict.get("nearbyHazards", [])
-    if hazards:
-        hazards_with_dist = []
-        for h in hazards:
-            rel_x = h.get("relX", 0.0)
-            rel_y = h.get("relY", 0.0)
-            dist = math.sqrt(rel_x**2 + rel_y**2)
-            hazards_with_dist.append((dist, h))
-
-        # Ordina per distanza crescente (il più vicino è l'indice 0)
-        hazards_with_dist.sort(key=lambda x: x[0])
-        sorted_hazards = [h for _, h in hazards_with_dist[:3]]
+    if len(hazards) > 0:
+        h = hazards[0]
+        features.append(np.clip(h.get("relX", 0.0) / 15.0, -1.0, 1.0))
+        features.append(np.clip(h.get("relY", 0.0) / 15.0, -1.0, 1.0))
+        features.append(np.clip(h.get("velocityX", 0.0) / 20.0, -1.0, 1.0))
+        features.append(np.clip(h.get("velocityY", 0.0) / 20.0, -1.0, 1.0))
+        features.append(np.clip(h.get("distance", 15.0) / 15.0, 0.0, 1.0))
     else:
-        sorted_hazards = []
-
-    # Riempiamo sempre 3 slot hazard (zero-padding se mancano)
-    for i in range(3):
-        if i < len(sorted_hazards):
-            h = sorted_hazards[i]
-            rel_x = h.get("relX", 0.0) / 30.0
-            rel_y = h.get("relY", 0.0) / 30.0
-            features.append(np.clip(rel_x, -1.0, 1.0))
-            features.append(np.clip(rel_y, -1.0, 1.0))
-
-            # Velocità relativa hazard vs player (utile per schivare boomerangs)
-            h_vx = h.get("velocityX", 0.0)
-            p_vx = state_dict.get("playerVelocityX", 0.0)
-            rel_vx = (h_vx - p_vx) / 20.0
-            features.append(np.clip(rel_vx, -1.0, 1.0))
-        else:
-            # Padding: se non c'è pericolo, mettiamo 0
-            features.extend([0.0, 0.0, 0.0])
+        features.extend([0.0, 0.0, 0.0, 0.0, 1.0])
 
     return np.array(features, dtype=np.float32)
 
@@ -170,7 +132,7 @@ def train_dqn(
     gamma=0.99,
     epsilon_start=1.0,
     epsilon_end=0.05,
-    epsilon_decay=100000,
+    epsilon_decay=200000,
     checkpoint_dir="checkpoints_dqn_mantis",
     host="localhost",
     port=5555,
@@ -193,10 +155,10 @@ def train_dqn(
     initial_state = env.reset()
     state_array = preprocess_state(initial_state)
     state_size = len(state_array)
-    action_size = 8
+    action_size = 9  # Azioni base
 
     print(f"[Train] State size: {state_size}, Action size: {action_size}")
-    print("[Train] Mode: SOFT UPDATES + LOW LR (Stabilization Fix)")
+    print("[Train] Mode: ENHANCED STATE + BASE ACTIONS")
 
     # Agent Initialization
     agent = DQNAgent(

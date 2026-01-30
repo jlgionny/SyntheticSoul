@@ -167,98 +167,111 @@ class FileBasedSharedState:
 
 # ============ PREPROCESSING FUNCTIONS ============
 def preprocess_state_dqn(state_dict: dict) -> np.ndarray:
-    """Preprocessing per DQN (42 features)."""
-    import math
-
+    """
+    ENHANCED STATE per DQN (26 features) - Allineato con PPO.
+    Usa lo stesso stato per consistenza tra algoritmi.
+    """
     features = []
 
-    # Player features
-    player_x = state_dict.get("playerX", 0.0)
-    player_y = state_dict.get("playerY", 0.0)
-    features.append(player_x / 40.0)
-    features.append(player_y / 30.0)
-    features.append(np.clip(state_dict.get("playerVelocityX", 0.0) / 15.0, -1.0, 1.0))
-    features.append(np.clip(state_dict.get("playerVelocityY", 0.0) / 15.0, -1.0, 1.0))
+    # Player basics (5) - Status + soul
     features.append(state_dict.get("playerHealth", 0) / 10.0)
     features.append(state_dict.get("playerSoul", 0) / 100.0)
     features.append(float(state_dict.get("canDash", False)))
     features.append(float(state_dict.get("canAttack", False)))
     features.append(float(state_dict.get("isGrounded", False)))
-    features.append(float(state_dict.get("hasDoubleJump", False)))
 
-    # Terrain
+    # Player velocity (2)
+    features.append(np.clip(state_dict.get("playerVelocityX", 0.0) / 20.0, -1.0, 1.0))
+    features.append(np.clip(state_dict.get("playerVelocityY", 0.0) / 20.0, -1.0, 1.0))
+
+    # Terrain (5) - raycasts
     terrain_info = state_dict.get("terrainInfo", [1.0] * 5)
     if not terrain_info or len(terrain_info) < 5:
         terrain_info = [1.0] * 5
     features.extend(terrain_info[:5])
 
-    # Boss features
-    boss_x = state_dict.get("bossX", 0.0)
-    boss_y = state_dict.get("bossY", 0.0)
-    boss_relative_x = (boss_x - player_x) / 40.0
-    boss_relative_y = (boss_y - player_y) / 30.0
-    features.append(boss_relative_x)
-    features.append(boss_relative_y)
-    features.append(state_dict.get("bossHealth", 0) / 1000.0)
-    distance_to_boss = state_dict.get("distanceToBoss", 50.0)
-    features.append(np.clip(distance_to_boss / 50.0, 0.0, 1.0))
-    angle_to_boss = math.atan2(boss_relative_y, boss_relative_x) / math.pi
-    features.append(angle_to_boss)
-    features.append(float(state_dict.get("isFacingBoss", False)))
-    boss_vel_x = state_dict.get("bossVelocityX", 0.0)
-    features.append(np.clip(boss_vel_x / 15.0, -1.0, 1.0))
+    # Boss position (4)
+    boss_rel_x = state_dict.get("bossRelativeX", 0.0)
+    boss_rel_y = state_dict.get("bossRelativeY", 0.0)
+    distance = state_dict.get("distanceToBoss", 50.0) / 50.0
+    facing_boss = float(state_dict.get("isFacingBoss", False))
 
-    # Hazards
+    features.append(np.clip(boss_rel_x / 30.0, -1.0, 1.0))
+    features.append(np.clip(boss_rel_y / 30.0, -1.0, 1.0))
+    features.append(np.clip(distance, 0.0, 1.0))
+    features.append(facing_boss)
+
+    # Boss velocity (2)
+    features.append(np.clip(state_dict.get("bossVelocityX", 0.0) / 20.0, -1.0, 1.0))
+    features.append(np.clip(state_dict.get("bossVelocityY", 0.0) / 20.0, -1.0, 1.0))
+
+    # Boss health (1)
+    features.append(state_dict.get("bossHealth", 100.0) / 100.0)
+
+    # Mantis killed (1)
+    features.append(state_dict.get("mantisLordsKilled", 0) / 3.0)
+
+    # Hazards (5) - Il piÃ¹ vicino
     hazards = state_dict.get("nearbyHazards", [])
-    if hazards:
-        hazards_with_dist = []
-        for h in hazards:
-            rel_x = h.get("relX", 0.0)
-            rel_y = h.get("relY", 0.0)
-            dist = math.sqrt(rel_x**2 + rel_y**2)
-            hazards_with_dist.append((dist, h))
-        hazards_with_dist.sort(key=lambda x: x[0])
-        sorted_hazards = [h for _, h in hazards_with_dist[:3]]
+    if len(hazards) > 0:
+        h = hazards[0]
+        features.append(np.clip(h.get("relX", 0.0) / 15.0, -1.0, 1.0))
+        features.append(np.clip(h.get("relY", 0.0) / 15.0, -1.0, 1.0))
+        features.append(np.clip(h.get("velocityX", 0.0) / 20.0, -1.0, 1.0))
+        features.append(np.clip(h.get("velocityY", 0.0) / 20.0, -1.0, 1.0))
+        features.append(np.clip(h.get("distance", 15.0) / 15.0, 0.0, 1.0))
     else:
-        sorted_hazards = []
-
-    for i in range(3):
-        if i < len(sorted_hazards):
-            h = sorted_hazards[i]
-            features.append(np.clip(h.get("relX", 0.0) / 30.0, -1.0, 1.0))
-            features.append(np.clip(h.get("relY", 0.0) / 30.0, -1.0, 1.0))
-            h_vx = h.get("velocityX", 0.0)
-            p_vx = state_dict.get("playerVelocityX", 0.0)
-            features.append(np.clip((h_vx - p_vx) / 20.0, -1.0, 1.0))
-        else:
-            features.extend([0.0, 0.0, 0.0])
+        features.extend([0.0, 0.0, 0.0, 0.0, 1.0])
 
     return np.array(features, dtype=np.float32)
 
 
 def preprocess_state_ppo(state_dict: dict) -> np.ndarray:
-    """Preprocessing per PPO (18 features - minimal state)."""
+    """
+    ENHANCED STATE (26 features) - Combat-focused.
+    Include informazioni su boss velocity e stato combat.
+    """
     features = []
 
-    # Player basics
+    # Player basics (5) - Status + soul
     features.append(state_dict.get("playerHealth", 0) / 10.0)
+    features.append(state_dict.get("playerSoul", 0) / 100.0)  # Soul per spell
     features.append(float(state_dict.get("canDash", False)))
     features.append(float(state_dict.get("canAttack", False)))
     features.append(float(state_dict.get("isGrounded", False)))
 
-    # Terrain
+    # Player velocity (2) - Per capire momentum
+    features.append(np.clip(state_dict.get("playerVelocityX", 0.0) / 20.0, -1.0, 1.0))
+    features.append(np.clip(state_dict.get("playerVelocityY", 0.0) / 20.0, -1.0, 1.0))
+
+    # Terrain (5) - raycasts
     terrain_info = state_dict.get("terrainInfo", [1.0] * 5)
     if len(terrain_info) < 5:
         terrain_info = list(terrain_info) + [1.0] * (5 - len(terrain_info))
     features.extend(terrain_info[:5])
 
-    # Boss
-    features.append(state_dict.get("bossRelativeX", 0.0))
-    features.append(state_dict.get("bossRelativeY", 0.0))
-    features.append(np.clip(state_dict.get("distanceToBoss", 50.0) / 50.0, 0.0, 1.0))
-    features.append(float(state_dict.get("isFacingBoss", False)))
+    # Boss position (4) - Direzione e distanza
+    boss_rel_x = state_dict.get("bossRelativeX", 0.0)
+    boss_rel_y = state_dict.get("bossRelativeY", 0.0)
+    distance = state_dict.get("distanceToBoss", 50.0) / 50.0
+    facing_boss = float(state_dict.get("isFacingBoss", False))
 
-    # Hazards
+    features.append(np.clip(boss_rel_x / 30.0, -1.0, 1.0))
+    features.append(np.clip(boss_rel_y / 30.0, -1.0, 1.0))
+    features.append(np.clip(distance, 0.0, 1.0))
+    features.append(facing_boss)
+
+    # Boss velocity (2) - Per prevedere movimento
+    features.append(np.clip(state_dict.get("bossVelocityX", 0.0) / 20.0, -1.0, 1.0))
+    features.append(np.clip(state_dict.get("bossVelocityY", 0.0) / 20.0, -1.0, 1.0))
+
+    # Boss health (1) - Per tracking progresso
+    features.append(state_dict.get("bossHealth", 100.0) / 100.0)
+
+    # Mantis killed (1) - Fase del fight
+    features.append(state_dict.get("mantisLordsKilled", 0) / 3.0)
+
+    # Hazards (5) - Il piÃ¹ vicino
     hazards = state_dict.get("nearbyHazards", [])
     if len(hazards) > 0:
         h = hazards[0]
@@ -310,7 +323,7 @@ def train_dqn_instance(
     initial_state = env.reset()
     state_array = preprocess_state_dqn(initial_state)
     state_size = len(state_array)
-    action_size = 8
+    action_size = 9  # Azioni base
 
     # Initialize agent
     agent = DQNAgent(
@@ -318,7 +331,7 @@ def train_dqn_instance(
         action_size=action_size,
         learning_rate=learning_rate,
         gamma=gamma,
-        buffer_capacity=50000,
+        buffer_capacity=100000,  # Aumentato
     )
 
     # Load best model if exists
@@ -431,16 +444,16 @@ def train_ppo_instance(
     checkpoint_dir: str,
     num_episodes: int,
     sync_interval: int = 10,
-    learning_rate: float = 5e-4,
-    gamma: float = 0.98,
-    entropy_start: float = 0.50,
-    entropy_end: float = 0.15,
-    update_interval: int = 2048,
+    learning_rate: float = 1e-4,  # Ridotto per stabilitÃ
+    gamma: float = 0.995,  # Aumentato per reward sparse
+    entropy_start: float = 0.30,  # Ridotto - meno random
+    entropy_end: float = 0.05,
+    update_interval: int = 1024,  # Ridotto per update piÃ¹ frequenti
     max_steps: int = 6000,
 ):
     """Worker function per training PPO di una singola istanza."""
 
-    print(f"\n[Instance {instance_id}] Starting PPO training on port {port}")
+    print(f"\n[Instance {instance_id}] Starting PPO V2 training on port {port}")
 
     # Create shared state handler
     shared_state = FileBasedSharedState(checkpoint_dir, "ppo")
@@ -460,16 +473,19 @@ def train_ppo_instance(
     initial_state = env.reset()
     state_array = preprocess_state_ppo(initial_state)
     state_size = len(state_array)
-    action_size = 8
+    action_size = 9  # Azioni base
 
-    # Initialize agent
+    # Initialize agent with LSTM
     agent = PPOAgent(
         state_size=state_size,
         action_size=action_size,
         learning_rate=learning_rate,
         gamma=gamma,
+        gae_lambda=0.97,  # Aumentato per better credit assignment
         entropy_coef=entropy_start,
-        use_lstm=False,
+        use_lstm=True,  # Abilitato per pattern recognition
+        n_epochs=6,  # Aumentato per better learning
+        batch_size=128,  # Aumentato
     )
 
     # Load best model if exists
@@ -498,10 +514,22 @@ def train_ppo_instance(
         critic_loss_sum = 0.0
         num_updates = 0
 
+        # Exploration rate decrescente
+        if episode < 50:
+            explore_rate = 0.3
+        elif episode < 150:
+            explore_rate = 0.15
+        else:
+            explore_rate = 0.05
+
         for step in range(max_steps):
-            # Exploration in early episodes
-            if episode < 50 and np.random.random() < 0.3:
-                action = np.random.randint(0, action_size)
+            # SMART EXPLORATION: bias verso azioni combat
+            if np.random.random() < explore_rate:
+                # 60% chance di azione combat, 40% movimento
+                if np.random.random() < 0.6:
+                    action = np.random.choice([5, 7])  # ATTACK, SPELL
+                else:
+                    action = np.random.randint(0, action_size)
                 log_prob = 0.0
                 value = 0.0
             else:
@@ -674,10 +702,10 @@ Note:
         args.checkpoint_dir = f"checkpoints_{args.agent}_multi"
 
     if args.lr is None:
-        args.lr = 1e-5 if args.agent == "dqn" else 5e-4
+        args.lr = 1e-5 if args.agent == "dqn" else 1e-4  # PPO lr ridotto
 
     if args.gamma is None:
-        args.gamma = 0.99 if args.agent == "dqn" else 0.98
+        args.gamma = 0.99 if args.agent == "dqn" else 0.995  # PPO gamma aumentato
 
     # Full path for checkpoint dir
     checkpoint_dir_full = os.path.join(AI_AGENTS_DIR, args.checkpoint_dir)

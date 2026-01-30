@@ -25,39 +25,53 @@ from src.env.hollow_knight_env import HollowKnightEnv
 
 def preprocess_state(state_dict: dict) -> np.ndarray:
     """
-    MINIMAL STATE (18 features) - HKRL style.
-    REMOVE: Absolute positions, velocities, complex hazards, zone deviation.
-    KEEP: Only what matters for combat.
+    ENHANCED STATE (26 features) - Combat-focused.
+    Include informazioni su boss velocity e stato combat.
     """
     features = []
 
-    # Player basics (4) - NO velocity, just status
+    # Player basics (5) - Status + soul
     features.append(state_dict.get("playerHealth", 0) / 10.0)
+    features.append(state_dict.get("playerSoul", 0) / 100.0)  # Soul per spell
     features.append(float(state_dict.get("canDash", False)))
     features.append(float(state_dict.get("canAttack", False)))
     features.append(float(state_dict.get("isGrounded", False)))
 
-    # Terrain (5) - raycasts only
+    # Player velocity (2) - Per capire momentum
+    features.append(np.clip(state_dict.get("playerVelocityX", 0.0) / 20.0, -1.0, 1.0))
+    features.append(np.clip(state_dict.get("playerVelocityY", 0.0) / 20.0, -1.0, 1.0))
+
+    # Terrain (5) - raycasts
     terrain_info = state_dict.get("terrainInfo", [1.0] * 5)
     if len(terrain_info) < 5:
         terrain_info = list(terrain_info) + [1.0] * (5 - len(terrain_info))
     features.extend(terrain_info[:5])
 
-    # Boss (4) - SOLO direzione e distanza
+    # Boss position (4) - Direzione e distanza
     boss_rel_x = state_dict.get("bossRelativeX", 0.0)
     boss_rel_y = state_dict.get("bossRelativeY", 0.0)
     distance = state_dict.get("distanceToBoss", 50.0) / 50.0
     facing_boss = float(state_dict.get("isFacingBoss", False))
 
-    features.append(boss_rel_x)
-    features.append(boss_rel_y)
+    features.append(np.clip(boss_rel_x / 30.0, -1.0, 1.0))
+    features.append(np.clip(boss_rel_y / 30.0, -1.0, 1.0))
     features.append(np.clip(distance, 0.0, 1.0))
     features.append(facing_boss)
 
-    # Hazards (5) - SOLO il più vicino
+    # Boss velocity (2) - Per prevedere movimento
+    features.append(np.clip(state_dict.get("bossVelocityX", 0.0) / 20.0, -1.0, 1.0))
+    features.append(np.clip(state_dict.get("bossVelocityY", 0.0) / 20.0, -1.0, 1.0))
+
+    # Boss health (1) - Per tracking progresso
+    features.append(state_dict.get("bossHealth", 100.0) / 100.0)
+
+    # Mantis killed (1) - Fase del fight
+    features.append(state_dict.get("mantisLordsKilled", 0) / 3.0)
+
+    # Hazards (5) - Il più vicino
     hazards = state_dict.get("nearbyHazards", [])
     if len(hazards) > 0:
-        h = hazards[0]  # Solo il più pericoloso
+        h = hazards[0]
         features.append(np.clip(h.get("relX", 0.0) / 15.0, -1.0, 1.0))
         features.append(np.clip(h.get("relY", 0.0) / 15.0, -1.0, 1.0))
         features.append(np.clip(h.get("velocityX", 0.0) / 20.0, -1.0, 1.0))
@@ -72,17 +86,17 @@ def preprocess_state(state_dict: dict) -> np.ndarray:
 def train_ppo(
     num_episodes: int = 1000,
     max_steps: int = 6000,
-    update_interval: int = 2048,
-    learning_rate: float = 5e-4,
-    gamma: float = 0.98,
-    entropy_coef_start: float = 0.50,
-    entropy_coef_end: float = 0.15,
+    update_interval: int = 1024,  # Ridotto per update più frequenti
+    learning_rate: float = 1e-4,  # Ridotto per stabilità
+    gamma: float = 0.995,  # Aumentato per reward sparse
+    entropy_coef_start: float = 0.30,  # Ridotto - meno random
+    entropy_coef_end: float = 0.05,
     save_freq: int = 25,
-    checkpoint_dir: str = "checkpoints_ppo_minimal",
+    checkpoint_dir: str = "checkpoints_ppo_v2",
     host: str = "localhost",
     port: int = 5555,
 ):
-    """Train PPO agent with minimal state and maximum exploration."""
+    """Train PPO agent with enhanced state and combat-focused rewards."""
 
     # Setup directories
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -90,33 +104,38 @@ def train_ppo(
     os.makedirs(checkpoint_dir_full, exist_ok=True)
 
     print("=" * 60)
-    print(f"PPO Training - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"PPO Training V2 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
     print("CONFIGURATION:")
-    print("  ✓ State: MINIMAL (18 features)")
-    print("  ✓ LSTM: DISABLED (for debugging)")
-    print("  ✓ Entropy: 0.50 → 0.15 (max exploration)")
-    print("  ✓ Random actions: 50% for first 100 episodes")
-    print("  ✓ Wall penalty: -0.5 when stuck")
+    print("  ✓ State: ENHANCED (26 features)")
+    print("  ✓ Actions: 9 (base actions)")
+    print(f"  ✓ Learning rate: {learning_rate}")
+    print(f"  ✓ Gamma: {gamma}")
+    print(f"  ✓ Entropy: {entropy_coef_start} → {entropy_coef_end}")
+    print(f"  ✓ Update interval: {update_interval}")
+    print("  ✓ Combat-focused reward shaping")
     print("=" * 60)
 
-    # Initialize environment with minimal reward shaping
+    # Initialize environment with combat-focused reward shaping
     env = HollowKnightEnv(host=host, port=port, use_reward_shaping=True)
     initial_state = env.reset()
     state_array = preprocess_state(initial_state)
     state_size = len(state_array)
-    action_size = 8
+    action_size = 9  # Azioni base
 
     print(f"[PPO] State size: {state_size}, Action size: {action_size}")
 
-    # Initialize agent WITHOUT LSTM for debugging
+    # Initialize agent with LSTM for temporal patterns
     agent = PPOAgent(
         state_size=state_size,
         action_size=action_size,
         learning_rate=learning_rate,
         gamma=gamma,
+        gae_lambda=0.97,  # Aumentato per better credit assignment
         entropy_coef=entropy_coef_start,
-        use_lstm=False,  # DISABLED for debugging
+        use_lstm=True,  # Abilitato per pattern recognition
+        n_epochs=6,  # Aumentato per better learning
+        batch_size=128,  # Aumentato
     )
 
     # Training logs
@@ -124,7 +143,7 @@ def train_ppo(
     if not os.path.exists(logfile):
         with open(logfile, "w") as f:
             f.write(
-                "episode,total_reward,steps,boss_hp,player_hp,mantis_killed,wall_violations,actor_loss,critic_loss,entropy\n"
+                "episode,total_reward,steps,boss_hp,player_hp,mantis_killed,wall_violations,attacks,hits,hit_rate,actor_loss,critic_loss,entropy\n"
             )
 
     best_reward = -float("inf")
@@ -153,14 +172,30 @@ def train_ppo(
 
         print(f"\n{'='*60}")
         print(f"[Episode {episode + 1}/{num_episodes}] Entropy: {current_entropy:.3f}")
-        if episode < 100:
-            print("  [EXPLORATION MODE] 50% random actions")
+
+        # Exploration rate decrescente
+        if episode < 50:
+            explore_rate = 0.3  # 30% random per primi 50 episodi
+            print(f"  [EXPLORATION] {explore_rate*100:.0f}% random (warmup)")
+        elif episode < 150:
+            explore_rate = 0.15  # 15% per episodi 50-150
+            print(f"  [EXPLORATION] {explore_rate*100:.0f}% random")
+        else:
+            explore_rate = 0.05  # 5% per resto del training
         print(f"{'='*60}")
 
+        # Track combat stats per episode
+        attacks_attempted = 0
+        boss_hits = 0
+
         for step in range(max_steps):
-            # EXPLORATION: Random actions for first 100 episodes
-            if episode < 100 and np.random.random() < 0.5:
-                action = np.random.randint(0, action_size)
+            # SMART EXPLORATION: bias verso azioni combat
+            if np.random.random() < explore_rate:
+                # 60% chance di azione combat, 40% movimento
+                if np.random.random() < 0.6:
+                    action = np.random.choice([5, 7])  # ATTACK, SPELL
+                else:
+                    action = np.random.randint(0, action_size)
                 log_prob = 0.0
                 value = 0.0
             else:
@@ -169,6 +204,11 @@ def train_ppo(
             # Execute action
             next_state_dict, reward, done, info = env.step(action)
             next_state = preprocess_state(next_state_dict)
+
+            # Track combat stats (ora info non contiene più attack_attempted)
+            # Lo determiniamo dall'azione eseguita
+            if action in [5, 7]:  # ATTACK, SPELL
+                attacks_attempted += 1
 
             # Track wall violations
             terrain = next_state_dict.get("terrainInfo", [1.0] * 5)
@@ -237,14 +277,19 @@ def train_ppo(
         )
 
         # Episode summary
+        hit_rate = (boss_hits / attacks_attempted * 100) if attacks_attempted > 0 else 0
+
         print(f"\n{'='*60}")
         print(f"[Episode {episode + 1}] SUMMARY")
         print(f"{'='*60}")
         print(f"  Reward: {episode_reward:.2f} | Avg (50): {avg_reward_50:.2f}")
         print(f"  Steps: {episode_steps}")
-        print(f"  Boss HP: {info.get('boss_damage', 0):.0f}")
-        print(f"  Player HP: {info.get('player_hp', 0)}")
+        print(f"  Boss HP: {next_state_dict.get('bossHealth', 100):.0f}")
+        print(f"  Player HP: {next_state_dict.get('playerHealth', 0)}")
         print(f"  Mantis Killed: {next_state_dict.get('mantisLordsKilled', 0)}/3")
+        print(
+            f"  Combat: {attacks_attempted} attacks, {boss_hits} hits ({hit_rate:.1f}%)"
+        )
         print(f"  Wall Violations: {wall_violations}")
         print(f"  Loss: Actor={avg_actor_loss:.4f}, Critic={avg_critic_loss:.4f}")
         print(f"  Entropy: {avg_entropy:.4f} (target={current_entropy:.3f})")
@@ -254,8 +299,9 @@ def train_ppo(
         with open(logfile, "a") as f:
             f.write(
                 f"{episode + 1},{episode_reward:.2f},{episode_steps},"
-                f"{info.get('boss_damage', 0):.0f},{info.get('player_hp', 0)},"
+                f"{next_state_dict.get('bossHealth', 100):.0f},{next_state_dict.get('playerHealth', 0)},"
                 f"{next_state_dict.get('mantisLordsKilled', 0)},{wall_violations},"
+                f"{attacks_attempted},{boss_hits},{hit_rate:.1f},"
                 f"{avg_actor_loss:.4f},{avg_critic_loss:.4f},{avg_entropy:.4f}\n"
             )
 
@@ -307,33 +353,39 @@ if __name__ == "__main__":
         help="Number of episodes to train (default: 1000)",
     )
     parser.add_argument(
-        "--lr", type=float, default=5e-4, help="Learning rate (default: 5e-4)"
+        "--lr", type=float, default=1e-4, help="Learning rate (default: 1e-4)"
     )
     parser.add_argument(
         "--entropy-start",
         type=float,
-        default=0.50,
-        help="Starting entropy coefficient (default: 0.50)",
+        default=0.30,
+        help="Starting entropy coefficient (default: 0.30)",
     )
     parser.add_argument(
         "--entropy-end",
         type=float,
-        default=0.15,
-        help="Ending entropy coefficient (default: 0.15)",
+        default=0.05,
+        help="Ending entropy coefficient (default: 0.05)",
+    )
+    parser.add_argument(
+        "--gamma",
+        type=float,
+        default=0.995,
+        help="Discount factor (default: 0.995)",
     )
     args = parser.parse_args()
 
     # Modifica il nome della cartella checkpoint per istanza
-    checkpoint_dir = "checkpoints_ppo_minimal"
+    checkpoint_dir = "checkpoints_ppo_v2"
     if args.instance > 0:
         checkpoint_dir = f"checkpoints_ppo_minimal_instance{args.instance}"
 
     HYPERPARAMS = {
         "num_episodes": args.episodes,
         "max_steps": 6000,
-        "update_interval": 2048,
+        "update_interval": 1024,
         "learning_rate": args.lr,
-        "gamma": 0.98,
+        "gamma": args.gamma,
         "entropy_coef_start": args.entropy_start,
         "entropy_coef_end": args.entropy_end,
         "save_freq": 25,
