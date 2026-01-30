@@ -5,6 +5,7 @@ import math
 import numpy as np
 from datetime import datetime
 import torch
+import argparse
 
 # Setup dei path per importare i moduli src
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
@@ -362,10 +363,43 @@ def train_dqn(
 
 
 if __name__ == "__main__":
-    # Nota: I parametri sono ora definiti dentro la funzione train_dqn come default.
-    # Puoi sovrascriverli qui se vuoi, ma i default sono già ottimizzati.
+    # ============ ARGOMENTI CLI PER MULTI-ISTANZA ============
+    parser = argparse.ArgumentParser(description="Train DQN Agent for Hollow Knight")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=5555,
+        help="Port to connect to (default: 5555). Use different ports for multiple instances.",
+    )
+    parser.add_argument(
+        "--instance",
+        type=int,
+        default=0,
+        help="Instance ID for checkpoint naming (default: 0)",
+    )
+    parser.add_argument(
+        "--episodes",
+        type=int,
+        default=1000,
+        help="Number of episodes to train (default: 1000)",
+    )
+    args = parser.parse_args()
+
+    # Modifica il nome della cartella checkpoint per istanza
+    checkpoint_dir = "checkpoints_dqn_mantis"
+    if args.instance > 0:
+        checkpoint_dir = f"checkpoints_dqn_mantis_instance{args.instance}"
+
+    print(f"\n{'='*60}")
+    print(f"DQN Training - Instance {args.instance}")
+    print(f"Port: {args.port}")
+    print(f"Checkpoint Dir: {checkpoint_dir}")
+    print(f"{'='*60}\n")
+
     try:
-        train_dqn()
+        train_dqn(
+            num_episodes=args.episodes, port=args.port, checkpoint_dir=checkpoint_dir
+        )
     except KeyboardInterrupt:
         print("\n[Train] Interrupted by user. Saving latest...")
     except Exception as e:

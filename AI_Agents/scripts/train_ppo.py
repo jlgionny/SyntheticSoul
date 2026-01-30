@@ -1,11 +1,17 @@
 """
 PPO Training Script - MINIMAL STATE (18 features).
 Debugging wall-banging behavior.
+
+Uso:
+    python train_ppo.py                     # Default settings
+    python train_ppo.py --port 5556         # Custom port
+    python train_ppo.py --instance 1        # Separate checkpoints
 """
 
 import os
 import sys
 import time
+import argparse
 import numpy as np
 from datetime import datetime
 
@@ -283,22 +289,62 @@ def train_ppo(
 
 
 if __name__ == "__main__":
+    # ============ ARGOMENTI CLI PER MULTI-ISTANZA ============
+    parser = argparse.ArgumentParser(description="Train PPO Agent for Hollow Knight")
+    parser.add_argument(
+        "--port", type=int, default=5555, help="Port to connect to (default: 5555)"
+    )
+    parser.add_argument(
+        "--instance",
+        type=int,
+        default=0,
+        help="Instance ID for checkpoint naming (default: 0)",
+    )
+    parser.add_argument(
+        "--episodes",
+        type=int,
+        default=1000,
+        help="Number of episodes to train (default: 1000)",
+    )
+    parser.add_argument(
+        "--lr", type=float, default=5e-4, help="Learning rate (default: 5e-4)"
+    )
+    parser.add_argument(
+        "--entropy-start",
+        type=float,
+        default=0.50,
+        help="Starting entropy coefficient (default: 0.50)",
+    )
+    parser.add_argument(
+        "--entropy-end",
+        type=float,
+        default=0.15,
+        help="Ending entropy coefficient (default: 0.15)",
+    )
+    args = parser.parse_args()
+
+    # Modifica il nome della cartella checkpoint per istanza
+    checkpoint_dir = "checkpoints_ppo_minimal"
+    if args.instance > 0:
+        checkpoint_dir = f"checkpoints_ppo_minimal_instance{args.instance}"
+
     HYPERPARAMS = {
-        "num_episodes": 1000,
+        "num_episodes": args.episodes,
         "max_steps": 6000,
         "update_interval": 2048,
-        "learning_rate": 5e-4,
+        "learning_rate": args.lr,
         "gamma": 0.98,
-        "entropy_coef_start": 0.50,
-        "entropy_coef_end": 0.15,
+        "entropy_coef_start": args.entropy_start,
+        "entropy_coef_end": args.entropy_end,
         "save_freq": 25,
-        "checkpoint_dir": "checkpoints_ppo_minimal",
+        "checkpoint_dir": checkpoint_dir,
         "host": "localhost",
-        "port": 5555,
+        "port": args.port,
     }
 
     print("=" * 60)
-    print("PPO Training - Mantis Lords Boss Fight")
+    print(f"PPO Training - Instance {args.instance}")
+    print(f"Port: {args.port}")
     print("MINIMAL STATE + MAX EXPLORATION")
     print("=" * 60)
     print("\nHyperparameters:")
@@ -309,4 +355,12 @@ if __name__ == "__main__":
     time.sleep(3)
     print()
 
-    train_ppo(**HYPERPARAMS)
+    try:
+        train_ppo(**HYPERPARAMS)
+    except KeyboardInterrupt:
+        print("\n[Train] Interrupted by user.")
+    except Exception as e:
+        print(f"\n[Train] Critical Error: {e}")
+        import traceback
+
+        traceback.print_exc()

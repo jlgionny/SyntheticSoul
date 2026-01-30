@@ -5,10 +5,7 @@ from collections import deque, namedtuple
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
-
 from src.models.dqn_net import DuelingDQN
-
 
 # Struttura dati per le transizioni
 Transition = namedtuple(
@@ -72,6 +69,7 @@ class DQNAgent:
         self.policy_net = DuelingDQN(state_size, action_size, hidden_sizes).to(
             self.device
         )
+
         self.target_net = DuelingDQN(state_size, action_size, hidden_sizes).to(
             self.device
         )
@@ -109,7 +107,6 @@ class DQNAgent:
                 # policy_net ora è una DuelingDQN
                 q_values = self.policy_net(state)
                 action = q_values.argmax(dim=1).item()
-
                 return action
 
     def store_transition(self, state, action, reward, next_state, done):
@@ -128,9 +125,9 @@ class DQNAgent:
         done_batch = torch.FloatTensor(batch.done).to(self.device)
 
         # Calcolo Q(s, a)
-        state_action_values = self.policy_net(state_batch).gather(
-            1, action_batch.unsqueeze(1)
-        )
+        state_action_values = (
+            self.policy_net(state_batch).gather(1, action_batch.unsqueeze(1)).squeeze(1)
+        )  # FIX: squeeze(1) invece di squeeze() dopo
 
         # Calcolo V(s') con Double DQN per stabilità
         with torch.no_grad():
@@ -138,15 +135,19 @@ class DQNAgent:
             next_actions = self.policy_net(next_state_batch).argmax(1).unsqueeze(1)
             # Usa Target Net per calcolare il valore di quell'azione
             next_state_values = (
-                self.target_net(next_state_batch).gather(1, next_actions).squeeze()
+                self.target_net(next_state_batch)
+                .gather(1, next_actions)
+                .squeeze(1)  # FIX: squeeze(1)
             )
 
-            target_values = reward_batch + (
-                self.gamma * next_state_values * (1 - done_batch)
-            )
+        target_values = reward_batch + (
+            self.gamma * next_state_values * (1 - done_batch)
+        )
 
         # Huber Loss (SmoothL1) è meglio di MSE per evitare esplosioni
-        loss = self.criterion(state_action_values.squeeze(), target_values)
+        loss = self.criterion(
+            state_action_values, target_values
+        )  # FIX: rimosso .squeeze()
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -155,8 +156,8 @@ class DQNAgent:
         torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=1.0)
 
         self.optimizer.step()
-
         self.steps_done += 1
+
         return loss.item()
 
     def update_target_network(self, tau=1.0):
@@ -191,7 +192,6 @@ class DQNAgent:
             raise FileNotFoundError(f"Model file not found: {filepath}")
 
         checkpoint = torch.load(filepath, map_location=self.device)
-
         self.policy_net.load_state_dict(checkpoint["policy_net_state_dict"])
         self.target_net.load_state_dict(checkpoint["target_net_state_dict"])
 

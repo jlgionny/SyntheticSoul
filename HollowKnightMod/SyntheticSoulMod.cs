@@ -19,10 +19,16 @@ namespace SyntheticSoulMod
         private bool isTraining = false;
         private HeroController hero;
 
-        private const int PORT = 5555;
+        private const int DEFAULT_PORT = 5555;
+        private int PORT;
         private const float UPDATE_INTERVAL = 0.05f;
         private float timeSinceLastUpdate = 0f;
         private bool wasConnected = false;
+
+        // ============ TRAINING SPEED ============
+        private const float TRAINING_TIMESCALE = 2.0f;  // Velocità 2x durante training
+        private bool trainingSpeedActive = false;
+        private bool autoSpawnTriggered = false;
 
         // ============ SCENE STATE VARIABLES ============
         private string currentScene = "";
@@ -58,12 +64,79 @@ namespace SyntheticSoulMod
             _instance = this;
         }
 
-        public override string GetVersion() => "9.3.0.0";
+        public override string GetVersion() => "9.4.0.0";
 
         public override void Initialize(Dictionary<string, Dictionary<string, GameObject>> preloadedObjects)
         {
-            Log("Initializing SyntheticSoul Mod v9.3.0 (NO AUTO-LOAD)...");
-            DesktopLogger.Log("=== SYNTHETIC SOUL MOD v9.3.0 - NO AUTO-LOAD ===");
+            Log("Initializing SyntheticSoul Mod v9.4.0 (AUTO-SPAWN + 2X SPEED)...");
+            DesktopLogger.Log("=== SYNTHETIC SOUL MOD v9.4.0 - AUTO-SPAWN + 2X SPEED ===");
+
+            // Leggi la porta da file di configurazione per supporto multi-istanza
+            PORT = DEFAULT_PORT;
+            try
+            {
+                // Cerca il file nella directory del gioco
+                // DLL è in: hollow_knight_Data/Managed/Mods/SyntheticSoulMod/SyntheticSoulMod.dll
+                // Dobbiamo risalire a: HK_Instance_X/synthetic_soul_port.txt
+                string gameDir = System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+                DesktopLogger.Log($"[Config] DLL location: {gameDir}");
+
+                // Prova diverse posizioni (risali 4 livelli per DLL in sottocartella)
+                string[] possiblePaths = new string[]
+                {
+                    System.IO.Path.Combine(gameDir, "..", "..", "..", "..", "synthetic_soul_port.txt"),  // 4 livelli su
+                    System.IO.Path.Combine(gameDir, "..", "..", "..", "synthetic_soul_port.txt"),        // 3 livelli su
+                    System.IO.Path.Combine(gameDir, "..", "..", "synthetic_soul_port.txt"),              // 2 livelli su
+                    System.IO.Path.Combine(gameDir, "..", "synthetic_soul_port.txt"),                    // 1 livello su
+                    System.IO.Path.Combine(gameDir, "synthetic_soul_port.txt"),
+                    "synthetic_soul_port.txt"
+                };
+
+                foreach (string path in possiblePaths)
+                {
+                    try
+                    {
+                        string fullPath = System.IO.Path.GetFullPath(path);
+                        DesktopLogger.Log($"[Config] Checking: {fullPath}");
+                        if (System.IO.File.Exists(fullPath))
+                        {
+                            string content = System.IO.File.ReadAllText(fullPath).Trim();
+                            DesktopLogger.Log($"[Config] Found file with content: '{content}'");
+                            if (int.TryParse(content, out int filePort))
+                            {
+                                PORT = filePort;
+                                DesktopLogger.Log($"[Config] ✓ Using port from file: {PORT} ({fullPath})");
+                                break;
+                            }
+                        }
+                    }
+                    catch (Exception pathEx)
+                    {
+                        DesktopLogger.Log($"[Config] Path check error: {pathEx.Message}");
+                    }
+                }
+
+                // Fallback: prova variabile d'ambiente
+                if (PORT == DEFAULT_PORT)
+                {
+                    string portEnv = Environment.GetEnvironmentVariable("SYNTHETIC_SOUL_PORT");
+                    if (!string.IsNullOrEmpty(portEnv) && int.TryParse(portEnv, out int envPort))
+                    {
+                        PORT = envPort;
+                        DesktopLogger.Log($"[Config] Using port from env: {PORT}");
+                    }
+                }
+
+                if (PORT == DEFAULT_PORT)
+                {
+                    DesktopLogger.Log($"[Config] Using default port: {PORT}");
+                }
+            }
+            catch (Exception e)
+            {
+                DesktopLogger.LogError($"[Config] Error reading port config: {e.Message}");
+                PORT = DEFAULT_PORT;
+            }
 
             stateExtractor = new GameStateExtractor();
             actionExecutor = new ActionExecutor();
@@ -93,7 +166,9 @@ namespace SyntheticSoulMod
             Log("SyntheticSoul Mod ready!");
             DesktopLogger.Log("✓ Boss FSM monitoring active");
             DesktopLogger.Log("✓ Mantis Lords multi-kill tracking enabled");
-            DesktopLogger.Log("✓ Waiting for Python connection (NO AUTO-LOAD)");
+            DesktopLogger.Log($"✓ Training speed: {TRAINING_TIMESCALE}x when connected");
+            DesktopLogger.Log($"✓ Listening on port {PORT}");
+            DesktopLogger.Log("✓ Auto-spawn to GG_Mantis_Lords on connect");
         }
 
         // ============ SCENE TRACKING ============
@@ -106,8 +181,16 @@ namespace SyntheticSoulMod
 
             sceneChangeHandled = true;
 
-            // Reset timeScale PRIMA di tutto
-            if (Time.timeScale != 1f)
+            // Mantieni TimeScale 2x se training è attivo, altrimenti reset a 1x
+            if (trainingSpeedActive && communicator != null && communicator.IsConnected)
+            {
+                if (Time.timeScale != TRAINING_TIMESCALE)
+                {
+                    Time.timeScale = TRAINING_TIMESCALE;
+                    DesktopLogger.Log($"[Scene] Time.timeScale = {TRAINING_TIMESCALE} (training active)");
+                }
+            }
+            else if (Time.timeScale != 1f)
             {
                 Time.timeScale = 1f;
                 DesktopLogger.Log("[Scene] Time.timeScale = 1 (reset)");
@@ -383,6 +466,49 @@ namespace SyntheticSoulMod
                    state == "start";
         }
 
+        // ============ AUTO-SPAWN TO MANTIS LORDS ARENA ============
+        private IEnumerator AutoSpawnToMantisArena()
+        {
+            DesktopLogger.Log("[AutoSpawn] ═══════════════════════════════════════");
+            DesktopLogger.Log("[AutoSpawn] ═══ TELEPORTING TO MANTIS LORDS ═══");
+            DesktopLogger.Log("[AutoSpawn] ═══════════════════════════════════════");
+
+            // Aspetta che il gioco sia pronto
+            yield return new WaitForSeconds(0.5f);
+
+            // Verifica che GameManager sia disponibile
+            if (GameManager.instance == null)
+            {
+                DesktopLogger.LogError("[AutoSpawn] GameManager not available!");
+                autoSpawnTriggered = false;
+                yield break;
+            }
+
+            // Prepara PlayerData per evitare problemi con bench respawn
+            var pd = PlayerData.instance;
+            if (pd != null)
+            {
+                pd.bossRushMode = true;
+                pd.SetBool("atBench", false);
+                DesktopLogger.Log("[AutoSpawn] PlayerData configured for boss rush");
+            }
+
+            // Imposta il reload flag
+            isReloading = true;
+            ignoreDamageUntilReady = true;
+
+            // Mantieni TimeScale 2x durante il caricamento
+            Time.timeScale = TRAINING_TIMESCALE;
+
+            DesktopLogger.Log("[AutoSpawn] Loading GG_Mantis_Lords...");
+
+            // Carica la scena dell'arena Mantis Lords
+            sceneChangeHandled = false;
+            UnityEngine.SceneManagement.SceneManager.LoadScene("GG_Mantis_Lords");
+
+            DesktopLogger.Log("[AutoSpawn] Scene load initiated!");
+        }
+
         // ============ CLEANUP ============
         private void CleanupDuplicateHeroesOnly()
         {
@@ -549,8 +675,16 @@ namespace SyntheticSoulMod
             yield return new WaitForSeconds(0.2f);
             DesktopLogger.Log("[Reload] ═══ RELOADING SCENE ═══");
 
-            // Mantieni time scale normale
-            Time.timeScale = 1f;
+            // Mantieni TimeScale 2x se training è attivo
+            if (trainingSpeedActive && communicator != null && communicator.IsConnected)
+            {
+                Time.timeScale = TRAINING_TIMESCALE;
+                DesktopLogger.Log($"[Reload] TimeScale maintained at {TRAINING_TIMESCALE}x");
+            }
+            else
+            {
+                Time.timeScale = 1f;
+            }
 
             // Ricarica la scena corrente se è una boss arena
             string currentSceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
@@ -697,6 +831,22 @@ namespace SyntheticSoulMod
                         actionExecutor.DestroyDevice();
 
                     actionExecutor = new ActionExecutor();
+
+                    // ============ AUTO-SPAWN TO MANTIS LORDS ============
+                    if (!autoSpawnTriggered && currentScene != "GG_Mantis_Lords")
+                    {
+                        autoSpawnTriggered = true;
+                        DesktopLogger.Log("[AutoSpawn] Teleporting to GG_Mantis_Lords arena...");
+                        GameManager.instance.StartCoroutine(AutoSpawnToMantisArena());
+                    }
+
+                    // ============ ATTIVA VELOCITÀ 2X ============
+                    if (!trainingSpeedActive)
+                    {
+                        trainingSpeedActive = true;
+                        Time.timeScale = TRAINING_TIMESCALE;
+                        DesktopLogger.Log($"[Speed] TimeScale set to {TRAINING_TIMESCALE}x");
+                    }
                 }
                 else
                 {
@@ -704,6 +854,14 @@ namespace SyntheticSoulMod
                     if (actionExecutor != null)
                     {
                         actionExecutor.DestroyDevice();
+                    }
+
+                    // ============ RIPRISTINA VELOCITÀ NORMALE ============
+                    if (trainingSpeedActive)
+                    {
+                        trainingSpeedActive = false;
+                        Time.timeScale = 1.0f;
+                        DesktopLogger.Log("[Speed] TimeScale reset to 1x");
                     }
                 }
 
@@ -716,7 +874,9 @@ namespace SyntheticSoulMod
             if (actionExecutor != null)
                 actionExecutor.Update();
 
-            timeSinceLastUpdate += Time.deltaTime;
+            // Usa unscaledDeltaTime per mantenere frequenza costante indipendente da TimeScale
+            // Questo garantisce ~20 Hz di comunicazione con Python anche a 2x
+            timeSinceLastUpdate += Time.unscaledDeltaTime;
             if (timeSinceLastUpdate >= UPDATE_INTERVAL)
             {
                 timeSinceLastUpdate = 0f;

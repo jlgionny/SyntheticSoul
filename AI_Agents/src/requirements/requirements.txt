@@ -10,3 +10,4 @@ scipy
 flake8
 autoflake
 black==25.12.0
+filelock
