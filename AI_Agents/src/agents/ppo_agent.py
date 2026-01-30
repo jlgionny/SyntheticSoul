@@ -314,8 +314,11 @@ class PPOAgent:
                 )
                 actor_loss = -torch.min(surr1, surr2).mean()
 
-                # Value loss
-                critic_loss = nn.MSELoss()(values.squeeze(), batch_returns)
+                # Value loss - ensure same shape to avoid broadcasting issues
+                values_squeezed = values.squeeze(-1)  # Remove last dim only
+                if values_squeezed.dim() == 0:
+                    values_squeezed = values_squeezed.unsqueeze(0)
+                critic_loss = nn.MSELoss()(values_squeezed, batch_returns)
 
                 # Total loss
                 loss = (

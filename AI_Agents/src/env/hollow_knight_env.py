@@ -9,7 +9,7 @@ class HollowKnightEnv:
     Environment wrapper aggiornato (Anti-Camping & Aggressive).
     """
 
-    # DEFINIZIONE AZIONI (Indenta con 4 spazi)
+    # DEFINIZIONE AZIONI BASE
     ACTIONS = {
         0: "MOVE_LEFT",
         1: "MOVE_RIGHT",
@@ -19,7 +19,7 @@ class HollowKnightEnv:
         5: "ATTACK",
         6: "DASH",
         7: "SPELL",
-        8: "IDLE",  # <--- Nuova azione aggiunta correttamente
+        8: "IDLE",
     }
 
     def __init__(
@@ -97,91 +97,141 @@ class HollowKnightEnv:
 
     def _compute_reward(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
         """
-        Calcola il reward con logica corretta per evitare il camping sui muri.
+        Reward shaping per combat contro Mantis Lords.
+
+        Filosofia del trade:
+        - Knight ha 9 HP, Boss ha ~300+ HP totali (3 Mantis Lords)
+        - Ogni colpo del Knight fa ~13 danni, quindi servono ~23 colpi per vincere
+        - Il Knight può subire max 9 colpi (1 danno ciascuno) prima di morire
+        - Quindi il ratio ideale è: 23 colpi dati / 9 colpi subiti = ~2.5:1
+        - Il reward deve incentivare questo trade favorevole
+
+        Danno da spuntoni:
+        - Gli spuntoni fanno 2 danni (doppio!)
+        - NON danno soul (non ricaricano heal)
+        - Sono completamente inutili e vanno evitati a tutti i costi
         """
         reward = 0.0
-        info = {"damage_taken": 0}
+        info = {"damage_taken": 0, "spike_damage": False, "damage_source": "none"}
 
         boss_hp = state.get("bossHealth", 100.0)
-        player_hp = state.get("playerHealth", 5)
+        player_hp = state.get("playerHealth", 9)
         mantis_killed = state.get("mantisLordsKilled", 0)
-
-        # --- DATI POSIZIONALI ---
-        terrain = state.get("terrainInfo", [1.0] * 5)
-        space_ahead = terrain[2] if len(terrain) > 2 else 0.0
-        space_behind = terrain[3] if len(terrain) > 3 else 0.0
 
         dist_to_boss = state.get("distanceToBoss", 20.0)
         is_facing_boss = state.get("isFacingBoss", False)
-        hazards = state.get("nearbyHazards", [])
 
-        # 1. ANALISI POSIZIONE
-        is_touching_wall = space_ahead < 1.0 or space_behind < 1.0
-        is_centered = space_ahead > 5.0 and space_behind > 5.0
-
-        # 2. CALCOLO REWARD PROSSIMITÀ
-        proximity_reward = 0.0
-
-        if dist_to_boss < 5.0:
-            proximity_reward = 0.2
-            if is_facing_boss:
-                proximity_reward += 0.1
-        elif dist_to_boss < 10.0:
-            proximity_reward = 0.1
-            if is_facing_boss:
-                proximity_reward += 0.05
-        elif dist_to_boss < 20.0:
-            proximity_reward = 0.02
-        else:
-            proximity_reward = -0.1
-
-        # 3. PENALITÀ AMBIENTALI
-        if is_touching_wall:
-            reward -= 0.5
-            if proximity_reward > 0:
-                proximity_reward = 0.0
-
-        reward += proximity_reward
-
-        if is_centered:
-            reward += 0.05
-
-        if hazards:
-            min_hazard_dist = 100.0
-            for h in hazards:
-                d = h.get("distance", 100.0)
-                if d < min_hazard_dist:
-                    min_hazard_dist = d
-            if min_hazard_dist < 1.0:
-                reward -= 0.5
-
-        # 4. COMBATTIMENTO
+        # ============================================
+        # 1. REWARD PER DANNO AL BOSS
+        # ============================================
+        # Ogni colpo al boss è prezioso - il Knight deve colpire ~23 volte
         if self.prev_boss_hp is not None:
             boss_damage = self.prev_boss_hp - boss_hp
             if boss_damage > 0:
-                reward += 2.0
+                # Reward proporzionale: se il boss ha ~300 HP e noi 9,
+                # ogni nostro colpo vale ~3x di più in termini di "progresso"
+                reward += 2.5
+
+        # ============================================
+        # 2. REWARD PER DISTANZA OTTIMALE DAL BOSS
+        # ============================================
+        # Range nail in Hollow Knight: ~2.5 unità
+        # Distanza ideale: 2.5-4 unità (può colpire, può schivare)
+        # I Mantis Lords hanno attacchi a media distanza (dash, boomerang)
+
+        proximity_reward = 0.0
+
+        if dist_to_boss < 2.5:
+            # RANGE DI ATTACCO PERFETTO - può colpire!
+            # Ma è anche pericoloso, quindi reward moderato
+            proximity_reward = 0.15
+            if is_facing_boss:
+                proximity_reward += 0.1  # Bonus se guarda il boss
+        elif dist_to_boss < 4.5:
+            # RANGE OTTIMALE - può colpire e ha tempo di reagire
+            proximity_reward = 0.2
+            if is_facing_boss:
+                proximity_reward += 0.1
+        elif dist_to_boss < 8.0:
+            # Range medio - deve avvicinarsi
+            proximity_reward = 0.05
+            if is_facing_boss:
+                proximity_reward += 0.03
+        elif dist_to_boss < 15.0:
+            # Lontano - piccola penalità
+            proximity_reward = -0.05
+        else:
+            # Troppo lontano - sta scappando
+            proximity_reward = -0.15
+
+        reward += proximity_reward
+
+        # ============================================
+        # 3. PENALITÀ PER DANNO SUBITO
+        # ============================================
+        # Il Knight ha solo 9 HP - ogni danno conta molto!
+        # Ma il danno da boss/proiettili è "accettabile" se stiamo facendo danni
+        # Il danno da spuntoni è SEMPRE negativo (niente soul, niente progresso)
 
         if self.prev_player_hp is not None:
             player_damage = self.prev_player_hp - player_hp
             if player_damage > 0:
-                reward -= 0.5
                 info["damage_taken"] = player_damage
 
+                # Determina la fonte del danno
+                # In Hollow Knight, gli spuntoni fanno 2 danni, il boss fa 1
+                if player_damage >= 2:
+                    # Danno da SPUNTONI (2 danni) - MOLTO GRAVE
+                    # - Non dà soul
+                    # - È evitabile al 100%
+                    # - È un errore di posizionamento
+                    info["spike_damage"] = True
+                    info["damage_source"] = "spikes"
+                    # Penalità MOLTO alta: 2 HP persi = 22% della vita
+                    # + è danno "stupido" che non dà nulla in cambio
+                    reward -= 3.0
+                else:
+                    # Danno da BOSS/PROIETTILI (1 danno)
+                    # - Dà soul (può healare dopo)
+                    # - Fa parte del combat normale
+                    # - Accettabile se stiamo facendo danni
+                    info["damage_source"] = "boss"
+                    # Penalità moderata: 1 HP = 11% della vita
+                    # Ma se stiamo facendo trade favorevoli, è ok
+                    reward -= 0.8
+
+        # ============================================
+        # 4. MANTIS LORDS KILLED
+        # ============================================
+        # Uccidere un Mantis Lord è un grande traguardo
         if mantis_killed > self.prev_mantis_killed:
-            reward += 20.0
+            # Bonus scalato: più ne uccidi, più difficile diventa
+            # (nella fase 2 ci sono 2 Mantis contemporaneamente)
+            kill_bonus = 25.0 + (mantis_killed * 5.0)
+            reward += kill_bonus
             self.prev_mantis_killed = mantis_killed
 
+        # ============================================
+        # 5. EPISODIO TERMINATO
+        # ============================================
         if done:
             if state.get("isDead", False):
-                reward -= 5.0
+                # Morte - penalità scalata in base ai progressi
+                # Se ha ucciso 2 Mantis ed è morto, non è così grave
+                death_penalty = -8.0 + (mantis_killed * 2.0)
+                reward += death_penalty
             elif state.get("bossDefeated", False) or mantis_killed == 3:
-                reward += 100.0
+                # VITTORIA!
+                # Bonus extra se ha vinto con tanta vita
+                hp_bonus = player_hp * 2.0  # Fino a +18 se vita piena
+                reward += 100.0 + hp_bonus
 
+        # Update tracking
         self.prev_boss_hp = boss_hp
         self.prev_player_hp = player_hp
-        self.prev_mantis_killed = mantis_killed
 
-        reward = max(-5.0, min(5.0, reward))
+        # Clip reward per stabilità training (range più ampio per eventi importanti)
+        reward = max(-10.0, min(10.0, reward))
 
         return reward, info
 

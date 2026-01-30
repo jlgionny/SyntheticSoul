@@ -29,6 +29,9 @@ namespace SyntheticSoulMod
         private const float TRAINING_TIMESCALE = 2.0f;  // Velocità 2x durante training
         private bool trainingSpeedActive = false;
         private bool autoSpawnTriggered = false;
+        private float originalFixedDeltaTime = 0.02f;  // Default Unity physics timestep
+        private float lastTimeScaleCheck = 0f;
+        private const float TIMESCALE_CHECK_INTERVAL = 0.1f;  // Controlla ogni 100ms
 
         // ============ SCENE STATE VARIABLES ============
         private string currentScene = "";
@@ -163,12 +166,69 @@ namespace SyntheticSoulMod
                 DesktopLogger.LogError($"Server start failed: {e.Message}\n{e.StackTrace}");
             }
 
+            // Salva il fixedDeltaTime originale
+            originalFixedDeltaTime = Time.fixedDeltaTime;
+
             Log("SyntheticSoul Mod ready!");
             DesktopLogger.Log("✓ Boss FSM monitoring active");
             DesktopLogger.Log("✓ Mantis Lords multi-kill tracking enabled");
             DesktopLogger.Log($"✓ Training speed: {TRAINING_TIMESCALE}x when connected");
+            DesktopLogger.Log($"✓ Physics-safe timeScale implementation");
             DesktopLogger.Log($"✓ Listening on port {PORT}");
             DesktopLogger.Log("✓ Auto-spawn to GG_Mantis_Lords on connect");
+        }
+
+        // ============ SAFE TIMESCALE SETTER ============
+        private void SetTrainingSpeed(bool enable)
+        {
+            if (enable)
+            {
+                if (!trainingSpeedActive)
+                {
+                    trainingSpeedActive = true;
+                    // Salva il fixedDeltaTime originale se non già salvato
+                    if (originalFixedDeltaTime <= 0f)
+                        originalFixedDeltaTime = Time.fixedDeltaTime;
+                }
+
+                // Imposta timeScale
+                Time.timeScale = TRAINING_TIMESCALE;
+
+                // CRITICO: Adatta fixedDeltaTime per mantenere la fisica stabile
+                // La fisica di Unity usa fixedDeltaTime per i calcoli
+                // Se timeScale = 2x e fixedDeltaTime rimane 0.02, la fisica fa 2x update
+                // Per mantenere la stessa "sensazione" di fisica, NON modifichiamo fixedDeltaTime
+                // Questo significa che la fisica farà 2x step per secondo = gioco 2x più veloce
+                // Se la fisica sembra "strana", decommentare la linea sotto:
+                // Time.fixedDeltaTime = originalFixedDeltaTime * TRAINING_TIMESCALE;
+
+                DesktopLogger.Log($"[Speed] TimeScale = {TRAINING_TIMESCALE}x, FixedDeltaTime = {Time.fixedDeltaTime}");
+            }
+            else
+            {
+                if (trainingSpeedActive)
+                {
+                    trainingSpeedActive = false;
+                    Time.timeScale = 1.0f;
+                    Time.fixedDeltaTime = originalFixedDeltaTime;
+                    DesktopLogger.Log("[Speed] TimeScale reset to 1x");
+                }
+            }
+        }
+
+        // ============ FORCE TIMESCALE (chiamato frequentemente) ============
+        private void EnforceTrainingSpeed()
+        {
+            if (!trainingSpeedActive) return;
+            if (communicator == null || !communicator.IsConnected) return;
+
+            // Il gioco potrebbe resettare timeScale (pause, scene change, etc.)
+            // Forziamo il valore corretto
+            if (Math.Abs(Time.timeScale - TRAINING_TIMESCALE) > 0.01f)
+            {
+                Time.timeScale = TRAINING_TIMESCALE;
+                // Non logghiamo ogni volta per evitare spam
+            }
         }
 
         // ============ SCENE TRACKING ============
@@ -181,19 +241,16 @@ namespace SyntheticSoulMod
 
             sceneChangeHandled = true;
 
-            // Mantieni TimeScale 2x se training è attivo, altrimenti reset a 1x
+            // Mantieni TimeScale 2x se training è attivo
             if (trainingSpeedActive && communicator != null && communicator.IsConnected)
             {
-                if (Time.timeScale != TRAINING_TIMESCALE)
-                {
-                    Time.timeScale = TRAINING_TIMESCALE;
-                    DesktopLogger.Log($"[Scene] Time.timeScale = {TRAINING_TIMESCALE} (training active)");
-                }
+                SetTrainingSpeed(true);
+                DesktopLogger.Log($"[Scene] Training speed maintained at {TRAINING_TIMESCALE}x");
             }
-            else if (Time.timeScale != 1f)
+            else if (trainingSpeedActive)
             {
-                Time.timeScale = 1f;
-                DesktopLogger.Log("[Scene] Time.timeScale = 1 (reset)");
+                // Era attivo ma non più connesso
+                SetTrainingSpeed(false);
             }
 
             currentScene = to.name;
@@ -498,7 +555,7 @@ namespace SyntheticSoulMod
             ignoreDamageUntilReady = true;
 
             // Mantieni TimeScale 2x durante il caricamento
-            Time.timeScale = TRAINING_TIMESCALE;
+            SetTrainingSpeed(true);
 
             DesktopLogger.Log("[AutoSpawn] Loading GG_Mantis_Lords...");
 
@@ -678,12 +735,12 @@ namespace SyntheticSoulMod
             // Mantieni TimeScale 2x se training è attivo
             if (trainingSpeedActive && communicator != null && communicator.IsConnected)
             {
-                Time.timeScale = TRAINING_TIMESCALE;
+                SetTrainingSpeed(true);
                 DesktopLogger.Log($"[Reload] TimeScale maintained at {TRAINING_TIMESCALE}x");
             }
             else
             {
-                Time.timeScale = 1f;
+                SetTrainingSpeed(false);
             }
 
             // Ricarica la scena corrente se è una boss arena
@@ -841,12 +898,7 @@ namespace SyntheticSoulMod
                     }
 
                     // ============ ATTIVA VELOCITÀ 2X ============
-                    if (!trainingSpeedActive)
-                    {
-                        trainingSpeedActive = true;
-                        Time.timeScale = TRAINING_TIMESCALE;
-                        DesktopLogger.Log($"[Speed] TimeScale set to {TRAINING_TIMESCALE}x");
-                    }
+                    SetTrainingSpeed(true);
                 }
                 else
                 {
@@ -857,12 +909,7 @@ namespace SyntheticSoulMod
                     }
 
                     // ============ RIPRISTINA VELOCITÀ NORMALE ============
-                    if (trainingSpeedActive)
-                    {
-                        trainingSpeedActive = false;
-                        Time.timeScale = 1.0f;
-                        DesktopLogger.Log("[Speed] TimeScale reset to 1x");
-                    }
+                    SetTrainingSpeed(false);
                 }
 
                 wasConnected = currentlyConnected;
@@ -873,6 +920,16 @@ namespace SyntheticSoulMod
 
             if (actionExecutor != null)
                 actionExecutor.Update();
+
+            // ============ ENFORCE TRAINING SPEED ============
+            // Il gioco può resettare Time.timeScale in vari punti
+            // Questo lo forza di nuovo al valore corretto
+            lastTimeScaleCheck += Time.unscaledDeltaTime;
+            if (lastTimeScaleCheck >= TIMESCALE_CHECK_INTERVAL)
+            {
+                lastTimeScaleCheck = 0f;
+                EnforceTrainingSpeed();
+            }
 
             // Usa unscaledDeltaTime per mantenere frequenza costante indipendente da TimeScale
             // Questo garantisce ~20 Hz di comunicazione con Python anche a 2x

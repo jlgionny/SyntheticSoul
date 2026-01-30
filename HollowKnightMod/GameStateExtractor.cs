@@ -262,10 +262,30 @@ namespace SyntheticSoulMod
                 if (hazards.Count >= MAX_HAZARDS * 2) break;
 
                 string name = hit.name.ToLower();
-                // Aggiungiamo filtro per non confondere i lord seduti come hazard attivi se sono lontani
-                bool isThreat = name.Contains("shot") || name.Contains("scythe") ||
-                              name.Contains("boomerang") || name.Contains("spike") ||
-                              (hit.gameObject.layer == LayerMask.NameToLayer("Enemies"));
+                string hazardType = "hazard";
+
+                // Rileva spuntoni (spikes) in vari modi
+                bool isSpike = name.Contains("spike") ||
+                              name.Contains("thorn") ||
+                              name.Contains("hazard") ||
+                              hit.gameObject.tag == "Spike" ||
+                              hit.gameObject.layer == LayerMask.NameToLayer("Terrain") && name.Contains("damage");
+
+                // Controlla se ha il componente DamageHero (spuntoni e zone di danno)
+                var damageHero = hit.GetComponent<DamageHero>();
+                if (damageHero != null)
+                {
+                    isSpike = true;
+                    hazardType = "spike";
+                }
+
+                // Rileva proiettili e attacchi boss
+                bool isProjectile = name.Contains("shot") || name.Contains("scythe") ||
+                                   name.Contains("boomerang") || name.Contains("projectile") ||
+                                   name.Contains("slash");
+
+                // Rileva nemici (escludi boss sui troni)
+                bool isEnemy = hit.gameObject.layer == LayerMask.NameToLayer("Enemies");
 
                 // Se è un nemico ma è "Mantis Lord" ed è molto in alto (> player + 5 unità), ignoralo (è sul trono)
                 if (name.Contains("mantis") && hit.transform.position.y > playerPos.y + 5.0f)
@@ -273,11 +293,27 @@ namespace SyntheticSoulMod
                     continue;
                 }
 
+                bool isThreat = isSpike || isProjectile || isEnemy;
+
                 if (isThreat)
                 {
+                    // Se è uno spike, assicurati che il tipo sia "spike"
+                    if (isSpike)
+                    {
+                        hazardType = "spike";
+                    }
+                    else if (isProjectile)
+                    {
+                        hazardType = "projectile";
+                    }
+                    else
+                    {
+                        hazardType = "enemy";
+                    }
+
                     var hInfo = new HazardInfo
                     {
-                        type = "hazard",
+                        type = hazardType,
                         relX = hit.transform.position.x - playerPos.x,
                         relY = hit.transform.position.y - playerPos.y,
                         distance = Vector2.Distance(playerPos, hit.transform.position)

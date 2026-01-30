@@ -394,6 +394,39 @@ namespace SyntheticSoulMod
                         device?.Reset();
                         ResetAllTimers();
                         break;
+
+                    // ============ COMBO ACTIONS ============
+                    case "JUMP_ATTACK":
+                        // Jump + Attack simultanei (essenziale vs Mantis Lords)
+                        device?.Jump();
+                        device?.Attack();
+                        jumpReleaseTime = timeNow + 0.15f;
+                        attackReleaseTime = timeNow + TAP_DURATION;
+                        break;
+
+                    case "DASH_ATTACK":
+                        // Dash + Attack (per closing distance e colpire)
+                        device?.Dash();
+                        device?.Attack();
+                        dashReleaseTime = timeNow + TAP_DURATION;
+                        attackReleaseTime = timeNow + TAP_DURATION + 0.05f; // Leggero delay
+                        break;
+
+                    case "DASH_LEFT":
+                        // Dash verso sinistra
+                        device?.Left();
+                        device?.Dash();
+                        moveReleaseTime = timeNow + TAP_DURATION;
+                        dashReleaseTime = timeNow + TAP_DURATION;
+                        break;
+
+                    case "DASH_RIGHT":
+                        // Dash verso destra
+                        device?.Right();
+                        device?.Dash();
+                        moveReleaseTime = timeNow + TAP_DURATION;
+                        dashReleaseTime = timeNow + TAP_DURATION;
+                        break;
                 }
             }
             catch (Exception e)
