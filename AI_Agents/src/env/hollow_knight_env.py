@@ -12,7 +12,7 @@ class HollowKnightEnv:
     NOTA: Richiede la Mod aggiornata che invia 'lastHazardType'.
     """
 
-    # Mappatura Azioni (Non modificare se non cambi anche l'Agent)
+    # Mappatura Azioni (8 azioni - IDLE rimosso per performance)
     ACTIONS = {
         0: "MOVE_LEFT",
         1: "MOVE_RIGHT",
@@ -22,7 +22,6 @@ class HollowKnightEnv:
         5: "ATTACK",
         6: "DASH",
         7: "SPELL",
-        8: "IDLE",
     }
 
     def __init__(
@@ -198,9 +197,6 @@ class HollowKnightEnv:
         """Resetta l'ambiente e attende un nuovo stato valido."""
         print("[Env] Reset - waiting for new episode...")
 
-        # Invia IDLE per sbloccare eventuali socket appesi
-        self._send_action("IDLE")
-
         state = self._receive_state()
         attempts = 0
 
@@ -228,7 +224,7 @@ class HollowKnightEnv:
         """
         Esegue un'azione e restituisce (stato, reward, done, info).
         """
-        action_name = self.ACTIONS.get(action, "IDLE")
+        action_name = self.ACTIONS.get(action, "MOVE_LEFT")  # Default a movimento se azione invalida
         self._send_action(action_name)
 
         state = self._receive_state()

@@ -89,8 +89,8 @@ def train_ppo(
     update_interval: int = 1024,  # Ridotto per update più frequenti
     learning_rate: float = 1e-4,  # Ridotto per stabilità
     gamma: float = 0.995,  # Aumentato per reward sparse
-    entropy_coef_start: float = 0.30,  # Ridotto - meno random
-    entropy_coef_end: float = 0.05,
+    entropy_coef_start: float = 0.05,  # Inizio moderato per esplorazione
+    entropy_coef_end: float = 0.01,   # Fine basso per sfruttamento
     save_freq: int = 25,
     checkpoint_dir: str = "checkpoints_ppo_v2",
     host: str = "localhost",
@@ -108,7 +108,7 @@ def train_ppo(
     print("=" * 60)
     print("CONFIGURATION:")
     print("  ✓ State: ENHANCED (26 features)")
-    print("  ✓ Actions: 9 (base actions)")
+    print("  ✓ Actions: 8 (IDLE rimosso)")
     print(f"  ✓ Learning rate: {learning_rate}")
     print(f"  ✓ Gamma: {gamma}")
     print(f"  ✓ Entropy: {entropy_coef_start} → {entropy_coef_end}")
@@ -121,7 +121,7 @@ def train_ppo(
     initial_state = env.reset()
     state_array = preprocess_state(initial_state)
     state_size = len(state_array)
-    action_size = 9  # Azioni base
+    action_size = 8  # 8 azioni (IDLE rimosso)
 
     print(f"[PPO] State size: {state_size}, Action size: {action_size}")
 
@@ -137,6 +137,9 @@ def train_ppo(
         n_epochs=6,  # Aumentato per better learning
         batch_size=128,  # Aumentato
     )
+
+    # Aggiorna action_size nell'agent se necessario per coerenza
+    agent.action_size = action_size
 
     # Training logs
     logfile = os.path.join(checkpoint_dir_full, "training_log.txt")
@@ -173,15 +176,17 @@ def train_ppo(
         print(f"\n{'='*60}")
         print(f"[Episode {episode + 1}/{num_episodes}] Entropy: {current_entropy:.3f}")
 
-        # Exploration rate decrescente
+        # Exploration rate con decadimento graduale
+        # All'inizio serve esplorazione per riempire il buffer con esperienze diverse
         if episode < 50:
-            explore_rate = 0.3  # 30% random per primi 50 episodi
-            print(f"  [EXPLORATION] {explore_rate*100:.0f}% random (warmup)")
+            explore_rate = 0.20  # 20% warmup - raccoglie esperienze diverse
         elif episode < 150:
-            explore_rate = 0.15  # 15% per episodi 50-150
-            print(f"  [EXPLORATION] {explore_rate*100:.0f}% random")
+            explore_rate = 0.10  # 10% fase intermedia
+        elif episode < 300:
+            explore_rate = 0.05  # 5% raffinamento
         else:
-            explore_rate = 0.05  # 5% per resto del training
+            explore_rate = 0.02  # 2% mantenimento minimo
+        print(f"  [EXPLORATION] {explore_rate*100:.0f}% random")
         print(f"{'='*60}")
 
         # Track combat stats per episode
@@ -358,14 +363,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--entropy-start",
         type=float,
-        default=0.30,
-        help="Starting entropy coefficient (default: 0.30)",
+        default=0.05,
+        help="Starting entropy coefficient (default: 0.05)",
     )
     parser.add_argument(
         "--entropy-end",
         type=float,
-        default=0.05,
-        help="Ending entropy coefficient (default: 0.05)",
+        default=0.01,
+        help="Ending entropy coefficient (default: 0.01)",
     )
     parser.add_argument(
         "--gamma",

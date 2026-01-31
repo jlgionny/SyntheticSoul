@@ -25,7 +25,8 @@ namespace SyntheticSoulMod
         private bool wasConnected = false;
 
         // ============ TRAINING SPEED ============
-        private const float TRAINING_TIMESCALE = 2.0f;
+        // NOTA: Velocità 1x per evitare ritardi con l'agente
+        private const float TRAINING_TIMESCALE = 1.0f;
         private bool trainingSpeedActive = false;
         private bool autoSpawnTriggered = false;
         private float originalFixedDeltaTime = 0.02f;
@@ -71,12 +72,12 @@ namespace SyntheticSoulMod
             _instance = this;
         }
 
-        public override string GetVersion() => "9.4.0.0";
+        public override string GetVersion() => "9.5.0.0";
 
         public override void Initialize(Dictionary<string, Dictionary<string, GameObject>> preloadedObjects)
         {
-            Log("Initializing SyntheticSoul Mod v9.4.0 (AUTO-SPAWN + 2X SPEED)...");
-            DesktopLogger.Log("=== SYNTHETIC SOUL MOD v9.4.0 - AUTO-SPAWN + 2X SPEED ===");
+            Log("Initializing SyntheticSoul Mod v9.5.0 (AUTO-SPAWN + 1X SPEED)...");
+            DesktopLogger.Log("=== SYNTHETIC SOUL MOD v9.5.0 - AUTO-SPAWN + 1X SPEED ===");
 
             PORT = DEFAULT_PORT;
             try

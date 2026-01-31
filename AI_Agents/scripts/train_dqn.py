@@ -127,8 +127,6 @@ def wait_for_arena_ready(env, max_retries=20):
 
         time.sleep(0.5)
         print(".", end="", flush=True)
-        # Inviamo un IDLE per tenere sveglio il socket
-        env._send_action("IDLE")
 
     print(" ⚠️ Timeout waiting for arena. Starting anyway (hope for the best).")
     return env.reset()
@@ -174,7 +172,7 @@ def train_dqn(
     # Inizializzazione Agente
     initial_state = preprocess_state(initial_state_dict)
     state_size = len(initial_state)
-    action_size = 9  # Le azioni definite nell'Env
+    action_size = 8  # 8 azioni (IDLE rimosso)
 
     print(f"[System] State Size: {state_size} | Action Size: {action_size}")
 
