@@ -283,6 +283,13 @@ def preprocess_state_ppo(state_dict: dict) -> np.ndarray:
     else:
         features.extend([0.0, 0.0, 0.0, 0.0, 1.0])
 
+    if len(hazards) > 1:
+        h = hazards[1]
+        features.append(np.clip(h.get("relX", 0.0) / 15.0, -1.0, 1.0))
+        features.append(np.clip(h.get("relY", 0.0) / 15.0, -1.0, 1.0))
+    else:
+        features.extend([0.0] * 2)
+
     return np.array(features, dtype=np.float32)
 
 
@@ -297,8 +304,8 @@ def train_dqn_instance(
     learning_rate: float = 1e-5,
     gamma: float = 0.99,
     epsilon_start: float = 1.0,
-    epsilon_end: float = 0.05,
-    epsilon_decay: int = 100000,
+    epsilon_end: float = 0.1,
+    epsilon_decay: int = 80000,
     max_steps: int = 3000,
 ):
     """Worker function per training DQN di una singola istanza."""
@@ -334,7 +341,7 @@ def train_dqn_instance(
         buffer_capacity=100000,  # Aumentato
     )
 
-    # Load best model if exists
+# Load best model if exists
     best_model_path = shared_state.get_best_model_path()
     if best_model_path:
         try:
@@ -402,20 +409,34 @@ def train_dqn_instance(
         local_model_path = os.path.join(instance_dir, "latest.pth")
         agent.save(local_model_path)
 
-        # Update global best if needed
+        # Update global best if needed (Se noi siamo i migliori, aggiorniamo gli altri)
         if episode_reward > best_local_reward:
             best_local_reward = episode_reward
             shared_state.update_best_model(
                 instance_id, episode_reward, local_model_path
             )
 
-        # Sync with best model periodically
+        # Sync with best model periodically (Se noi siamo scarsi, impariamo dagli altri)
         if (episode + 1) % sync_interval == 0:
             best_model_path = shared_state.get_best_model_path()
             best_reward = shared_state.get_best_reward()
+
+            # Scarica solo se il modello globale è significativamente migliore del nostro risultato attuale
             if best_model_path and episode_reward < best_reward * 0.8:
                 try:
+                    # === FIX IMPORTANTE INIZIO ===
+                    # 1. Salviamo i contatori attuali per NON resettare l'epsilon
+                    current_steps = agent.steps_done
+                    current_eps = agent.episodes_done
+
+                    # 2. Carichiamo i pesi del cervello migliore
                     agent.load(best_model_path)
+
+                    # 3. Ripristiniamo i nostri contatori (l'esperienza di esplorazione resta la nostra)
+                    agent.steps_done = current_steps
+                    agent.episodes_done = current_eps
+                    # === FIX IMPORTANTE FINE ===
+
                     print(
                         f"[Instance {instance_id}] Synced with best model (reward: {best_reward:.2f})"
                     )

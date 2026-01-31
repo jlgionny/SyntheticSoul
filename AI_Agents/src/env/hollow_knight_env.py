@@ -99,8 +99,8 @@ class HollowKnightEnv:
 
     def _compute_reward(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
         """
-        Calcola il reward basato sullo stato corrente.
-        Usa 'lastHazardType' dalla Mod per distinguere Spuntoni vs Boss.
+        Reward Shaping AGGRESSIVO per Mantis Lords.
+        Obiettivo: Insegnare all'agente che colpire è la priorità assoluta.
         """
         reward = 0.0
         info = {"damage_taken": 0, "spike_damage": False, "damage_source": "none"}
@@ -112,72 +112,85 @@ class HollowKnightEnv:
         dist_to_boss = state.get("distanceToBoss", 20.0)
         is_facing_boss = state.get("isFacingBoss", False)
 
-        # Dati specifici per il danno (Richiede Mod C# Aggiornata)
+        # Dati danno
         damage_taken_in_step = state.get("damageTaken", 0)
-        hazard_type = state.get("lastHazardType", 0)  # 0=None, 1=Enemy, 2=Env/Spike
+        hazard_type = state.get("lastHazardType", 0)
 
-        # --- 1. ATTACCO (Hit Boss) ---
-        # Premia se abbiamo tolto vita al boss rispetto allo step precedente
+        # --- 1. ATTACCO (CRITICO: Aumentato drasticamente) ---
+        # Se l'agente colpisce, deve essere una festa.
+        # Prima era +1.0. Ora mettiamo +15.0.
+        # Rapporto: 1 Colpo inflitto vale come 3 Colpi subiti (15 vs 5).
         if self.prev_boss_hp is not None:
             boss_damage = self.prev_boss_hp - boss_hp
             if boss_damage > 0:
-                reward += 1.0  # +1.0 Base Reward per colpo
+                reward += 20
 
-        # --- 2. POSIZIONAMENTO (Spacing & Facing) ---
+        # --- 2. POSIZIONAMENTO (Rifinito) ---
         proximity_reward = 0.0
 
-        # Bonus costante se guardiamo il boss (fondamentale per colpire)
+        # Guardare il boss è un prerequisito per colpire
         if is_facing_boss:
-            proximity_reward += 0.02
+            proximity_reward += 0.05
 
         # Gestione Zone di Distanza
         if dist_to_boss < 1.5:
-            # TROPPO VICINO (Crowding) -> Rischio collisione
-            proximity_reward -= 0.1
-        elif 1.5 <= dist_to_boss <= 3.5:
-            # SWEET SPOT (Range Aculeo) -> Ottimo
+            # TROPPO VICINO: Rischio collisione, piccola penalità
+            proximity_reward -= 0.05
+        elif 1.5 <= dist_to_boss <= 4.0:
+            # SWEET SPOT: Leggermente ampliato per facilitare l'avvicinamento
             proximity_reward += 0.1
             if is_facing_boss:
-                proximity_reward += 0.05  # Bonus extra se pronto a colpire
+                proximity_reward += 0.1  # Bonus extra
         elif dist_to_boss > 15.0:
-            # CAMPING (Troppo lontano) -> Inutile
+            # CAMPING: Penalità per incoraggiare l'avvicinamento
             proximity_reward -= 0.1
 
         reward += proximity_reward
 
-        # --- 3. GESTIONE DANNI (Fonte Verificata da Unity) ---
-        # Se la mod ci dice che abbiamo preso danno in questo frame
+        # --- 3. GESTIONE DANNI (Bilanciata) ---
         if damage_taken_in_step > 0:
             info["damage_taken"] = damage_taken_in_step
 
-            # HAZARD TYPE 2 = Danno Ambientale (Spuntoni, Acido, Lave)
+            # Danno Spuntoni/Muri (Evitabile)
             if hazard_type == 2:
                 info["spike_damage"] = True
                 info["damage_source"] = "spikes"
-                reward -= 3.5  # Penalità Severa (Morte istantanea logica)
+                # Penalità alta ma non infinita. Deve capire che il muro fa male.
+                reward -= 5.0
 
-            # HAZARD TYPE 1 (o altro) = Nemico, Proiettile, Boss
+            # Danno Boss/Proiettile
             else:
                 info["damage_source"] = "boss"
-                reward -= 2.0  # Penalità Standard (Combattimento)
+                # Penalità standard. Deve essere inferiore al premio per l'attacco (15.0)
+                # Se fosse troppo alta (es. -20), l'agente smetterebbe di provare ad attaccare.
+                reward -= 3.5
 
-        # --- 4. OBIETTIVI (Kill & Vittoria) ---
+        # --- 4. OBIETTIVI (Scalati per il nuovo reward) ---
         if mantis_killed > self.prev_mantis_killed:
-            reward += 10.0  # Bonus per aver ucciso una delle mantidi
+            # Uccidere una mantide è un evento enorme, deve spiccare rispetto ai colpi normali
+            reward += 50.0
             self.prev_mantis_killed = mantis_killed
+
+        # Living Reward: Piccolo incentivo a sopravvivere (opzionale, ma aiuta DQN)
+        reward += 0.05
 
         if done:
             if state.get("isDead", False):
-                reward -= 5.0  # Penalità finale morte
+                # Penalità morte. Non troppo alta altrimenti ha paura di rischiare.
+                reward -= 8.0
             elif state.get("bossDefeated", False) or mantis_killed == 3:
-                reward += 50.0  # Grande bonus vittoria
+                # VITTORIA: Jackpot.
+                reward += 100.0
 
         # Aggiornamento stato precedente
         self.prev_boss_hp = boss_hp
         self.prev_player_hp = player_hp
 
-        # Clipping finale per stabilità numerica (-5.0 a +5.0 esclude solo i reward vittoria estremi)
-        reward = max(-5.0, min(5.0, reward))
+        # --- RIMOZIONE CLIPPING ---
+        # NON CLIPPARE I REWARD!
+        # Se clippi a 5.0, il reward di +15 per l'attacco diventa uguale a +5.
+        # Il reward vittoria +200 diventa +5. L'agente non capirà mai cosa è importante.
+        # reward = max(-5.0, min(5.0, reward))  <-- RIMOSSO
 
         return reward, info
 

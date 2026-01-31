@@ -64,6 +64,8 @@ checkpoints_ppo_optimized/
 *.ckpt
 *.h5
 *.hdf5
+checkpoints_dqn_multi/
+checkpoints_ppo_multi/
 
 # Log di training
 training_log.txt
@@ -77,3 +79,6 @@ tensorboard/
 runs/
 tb_logs/
 lightning_logs/
+
+*.bat
+
