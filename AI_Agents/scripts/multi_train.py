@@ -167,30 +167,27 @@ class FileBasedSharedState:
 
 # ============ PREPROCESSING FUNCTIONS ============
 def preprocess_state_dqn(state_dict: dict) -> np.ndarray:
-    """
-    ENHANCED STATE per DQN (26 features) - Allineato con PPO.
-    Usa lo stesso stato per consistenza tra algoritmi.
-    """
     features = []
 
-    # Player basics (5) - Status + soul
+    # 1. Player Status
     features.append(state_dict.get("playerHealth", 0) / 10.0)
     features.append(state_dict.get("playerSoul", 0) / 100.0)
     features.append(float(state_dict.get("canDash", False)))
     features.append(float(state_dict.get("canAttack", False)))
     features.append(float(state_dict.get("isGrounded", False)))
 
-    # Player velocity (2)
+    # 2. Player Velocity
     features.append(np.clip(state_dict.get("playerVelocityX", 0.0) / 20.0, -1.0, 1.0))
     features.append(np.clip(state_dict.get("playerVelocityY", 0.0) / 20.0, -1.0, 1.0))
 
-    # Terrain (5) - raycasts
-    terrain_info = state_dict.get("terrainInfo", [1.0] * 5)
+    # 3. Terrain (Normalizzato per vedere meglio i muri/spuntoni)
+    terrain_info = state_dict.get("terrainInfo", [10.0] * 5)
     if not terrain_info or len(terrain_info) < 5:
-        terrain_info = [1.0] * 5
-    features.extend(terrain_info[:5])
+        terrain_info = [10.0] * 5
+    # Dividiamo per 20.0 (distanza massima vista) per avere valori 0-1
+    features.extend([np.clip(t / 20.0, 0.0, 1.0) for t in terrain_info[:5]])
 
-    # Boss position (4)
+    # 4. Boss Position
     boss_rel_x = state_dict.get("bossRelativeX", 0.0)
     boss_rel_y = state_dict.get("bossRelativeY", 0.0)
     distance = state_dict.get("distanceToBoss", 50.0) / 50.0
@@ -201,18 +198,16 @@ def preprocess_state_dqn(state_dict: dict) -> np.ndarray:
     features.append(np.clip(distance, 0.0, 1.0))
     features.append(facing_boss)
 
-    # Boss velocity (2)
+    # 5. Boss Velocity & Status
     features.append(np.clip(state_dict.get("bossVelocityX", 0.0) / 20.0, -1.0, 1.0))
     features.append(np.clip(state_dict.get("bossVelocityY", 0.0) / 20.0, -1.0, 1.0))
-
-    # Boss health (1)
     features.append(state_dict.get("bossHealth", 100.0) / 100.0)
-
-    # Mantis killed (1)
     features.append(state_dict.get("mantisLordsKilled", 0) / 3.0)
 
-    # Hazards (5) - Il piÃ¹ vicino
+    # 6. HAZARDS (Doppio Occhio per i Boomerang)
     hazards = state_dict.get("nearbyHazards", [])
+
+    # Hazard 1 (Il più vicino)
     if len(hazards) > 0:
         h = hazards[0]
         features.append(np.clip(h.get("relX", 0.0) / 15.0, -1.0, 1.0))
@@ -221,9 +216,22 @@ def preprocess_state_dqn(state_dict: dict) -> np.ndarray:
         features.append(np.clip(h.get("velocityY", 0.0) / 20.0, -1.0, 1.0))
         features.append(np.clip(h.get("distance", 15.0) / 15.0, 0.0, 1.0))
     else:
-        features.extend([0.0, 0.0, 0.0, 0.0, 1.0])
+        features.extend([0.0] * 5)
+
+    # Hazard 2 (Il secondo boomerang - CRUCIALE!)
+    if len(hazards) > 1:
+        h = hazards[1]
+        features.append(np.clip(h.get("relX", 0.0) / 15.0, -1.0, 1.0))
+        features.append(np.clip(h.get("relY", 0.0) / 15.0, -1.0, 1.0))
+        features.append(np.clip(h.get("velocityX", 0.0) / 20.0, -1.0, 1.0))
+        features.append(np.clip(h.get("velocityY", 0.0) / 20.0, -1.0, 1.0))
+        features.append(np.clip(h.get("distance", 15.0) / 15.0, 0.0, 1.0))
+    else:
+        features.extend([0.0] * 5)
 
     return np.array(features, dtype=np.float32)
+
+
 
 
 def preprocess_state_ppo(state_dict: dict) -> np.ndarray:
@@ -293,19 +301,19 @@ def preprocess_state_ppo(state_dict: dict) -> np.ndarray:
     return np.array(features, dtype=np.float32)
 
 
-# ============ INSTANCE WORKER FUNCTIONS ============
+# ============ HYPERPARAMETERS INSTANCE WORKER FUNCTIONS ============
 def train_dqn_instance(
     instance_id: int,
     port: int,
     checkpoint_dir: str,
     num_episodes: int,
     sync_interval: int = 10,
-    batch_size: int = 128,
-    learning_rate: float = 1e-5,
+    batch_size: int = 256,
+    learning_rate: float = 1e-4,
     gamma: float = 0.99,
-    epsilon_start: float = 1.0,
-    epsilon_end: float = 0.1,
-    epsilon_decay: int = 80000,
+    epsilon_start: float = 0.5,
+    epsilon_end: float = 0.05,
+    epsilon_decay: int = 100000,
     max_steps: int = 3000,
 ):
     """Worker function per training DQN di una singola istanza."""
@@ -330,7 +338,7 @@ def train_dqn_instance(
     initial_state = env.reset()
     state_array = preprocess_state_dqn(initial_state)
     state_size = len(state_array)
-    action_size = 9  # Azioni base
+    action_size = 8  # 8 azioni (IDLE rimosso)
 
     # Initialize agent
     agent = DQNAgent(
@@ -347,6 +355,7 @@ def train_dqn_instance(
         try:
             agent.load(best_model_path)
             print(f"[Instance {instance_id}] Loaded shared best model")
+            agent.steps_done = 0
         except Exception as e:
             print(f"[Instance {instance_id}] Could not load best model: {e}")
 
@@ -467,8 +476,8 @@ def train_ppo_instance(
     sync_interval: int = 10,
     learning_rate: float = 1e-4,  # Ridotto per stabilitÃ
     gamma: float = 0.995,  # Aumentato per reward sparse
-    entropy_start: float = 0.30,  # Ridotto - meno random
-    entropy_end: float = 0.05,
+    entropy_start: float = 0.05,  # Inizio moderato per esplorazione
+    entropy_end: float = 0.01,   # Fine basso per sfruttamento
     update_interval: int = 1024,  # Ridotto per update piÃ¹ frequenti
     max_steps: int = 6000,
 ):
@@ -494,7 +503,7 @@ def train_ppo_instance(
     initial_state = env.reset()
     state_array = preprocess_state_ppo(initial_state)
     state_size = len(state_array)
-    action_size = 9  # Azioni base
+    action_size = 8  # 8 azioni (IDLE rimosso)
 
     # Initialize agent with LSTM
     agent = PPOAgent(
@@ -535,13 +544,15 @@ def train_ppo_instance(
         critic_loss_sum = 0.0
         num_updates = 0
 
-        # Exploration rate decrescente
+        # Exploration rate con decadimento graduale
         if episode < 50:
-            explore_rate = 0.3
+            explore_rate = 0.20  # 20% warmup
         elif episode < 150:
-            explore_rate = 0.15
+            explore_rate = 0.10  # 10% fase intermedia
+        elif episode < 300:
+            explore_rate = 0.05  # 5% raffinamento
         else:
-            explore_rate = 0.05
+            explore_rate = 0.02  # 2% mantenimento minimo
 
         for step in range(max_steps):
             # SMART EXPLORATION: bias verso azioni combat
