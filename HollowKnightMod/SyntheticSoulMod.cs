@@ -907,6 +907,11 @@ namespace SyntheticSoulMod
                     return;
 
                 var gameState = stateExtractor.ExtractState();
+                // !!! FIX IMPORTANTE PER MANTIS KILLED !!!
+                // Sovrascriviamo il valore dell'extractor con il nostro contatore sicuro
+                // che viene aggiornato dall'evento OnHealthManagerDie
+                // ========================================================
+                gameState.mantisLordsKilled = this.mantisLordsKilled;
 
                 lock (damageLock)
                 {

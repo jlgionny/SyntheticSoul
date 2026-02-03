@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using Newtonsoft.Json;
+// Importante per leggere le intenzioni del boss
+using HutongGames.PlayMaker;
 
 namespace SyntheticSoulMod
 {
@@ -24,6 +26,8 @@ namespace SyntheticSoulMod
         public int damageTaken;
         public float[] terrainInfo;
         public int lastHazardType;
+
+        // Boss Info
         public float bossX;
         public float bossY;
         public float bossHealth;
@@ -33,6 +37,10 @@ namespace SyntheticSoulMod
         public bool isFacingBoss;
         public bool bossDefeated;
         public int mantisLordsKilled;
+
+        // Boss Intent (0=Idle, 1=Dash, 2=Drop, 3=Throw)
+        public int bossAction;
+
         public List<HazardInfo> nearbyHazards;
 
         public GameState()
@@ -42,6 +50,7 @@ namespace SyntheticSoulMod
             damageTaken = 0;
             lastHazardType = 1;
             mantisLordsKilled = 0;
+            bossAction = 0;
         }
     }
 
@@ -58,13 +67,16 @@ namespace SyntheticSoulMod
 
     public class GameStateExtractor
     {
-        private const float HAZARD_DETECTION_RADIUS = 20f; // Aumentato un po' per vedere meglio
+        private const float HAZARD_DETECTION_RADIUS = 25f; // Aumentato per sicurezza
         private const int MAX_HAZARDS = 3;
 
         private LayerMask terrainLayer;
         private LayerMask hazardLayer;
 
         private int prevMantisLordsKilled = 0;
+
+        // MEMORY FIX: Ricordiamo l'ultima vita nota per evitare che vada a 0 se il boss "blinka"
+        private float lastKnownBossHealth = 400f;
 
         public GameStateExtractor()
         {
@@ -75,7 +87,8 @@ namespace SyntheticSoulMod
         public void ResetTracking()
         {
             prevMantisLordsKilled = 0;
-            DesktopLogger.Log("[Extractor] Mantis Lords tracking reset");
+            lastKnownBossHealth = 400f;
+            DesktopLogger.Log("[Extractor] Tracking reset");
         }
 
         public GameState ExtractState()
@@ -127,26 +140,22 @@ namespace SyntheticSoulMod
             Vector2 playerPos = hero.transform.position;
             Vector2 rayOrigin = new Vector2(playerPos.x, playerPos.y + 0.5f);
 
-            // 1. TERRA
+            // Raycasts normalizzati (0-1)
             RaycastHit2D groundHit = Physics2D.Raycast(rayOrigin, Vector2.down, 5f, terrainLayer);
             state.terrainInfo[0] = (groundHit.collider != null) ? Mathf.Clamp01(groundHit.distance / 3f) : 1.0f;
 
-            // 2. SOFFITTO
             RaycastHit2D ceilingHit = Physics2D.Raycast(rayOrigin, Vector2.up, 5f, terrainLayer);
             state.terrainInfo[1] = (ceilingHit.collider != null) ? Mathf.Clamp01(ceilingHit.distance / 3f) : 1.0f;
 
             Vector2 forward = hero.cState.facingRight ? Vector2.right : Vector2.left;
             Vector2 backward = hero.cState.facingRight ? Vector2.left : Vector2.right;
 
-            // 3. MURO AVANTI
             RaycastHit2D wallHit = Physics2D.Raycast(rayOrigin, forward, 5f, terrainLayer);
             state.terrainInfo[2] = (wallHit.collider != null) ? Mathf.Clamp01(wallHit.distance / 3f) : 1.0f;
 
-            // 4. MURO DIETRO
             RaycastHit2D wallBackHit = Physics2D.Raycast(rayOrigin, backward, 5f, terrainLayer);
             state.terrainInfo[3] = (wallBackHit.collider != null) ? Mathf.Clamp01(wallBackHit.distance / 3f) : 1.0f;
 
-            // 5. DIAGONALE
             Vector2 diagDir = new Vector2(forward.x, -1f).normalized;
             RaycastHit2D diagHit = Physics2D.Raycast(rayOrigin, diagDir, 5f, terrainLayer);
             state.terrainInfo[4] = (diagHit.collider != null) ? Mathf.Clamp01(diagHit.distance / 3f) : 1.0f;
@@ -154,9 +163,8 @@ namespace SyntheticSoulMod
 
         private void ExtractBossState(HeroController hero, GameState state)
         {
-            // --- MODIFICA CRITICA: SMART BOSS FINDER ---
+            // Usa la logica Smart per trovare il boss attivo (ignorando i troni e i boomerang)
             GameObject boss = FindActiveMantisLord(hero.transform.position);
-            // ------------------------------------------
 
             if (boss != null)
             {
@@ -170,6 +178,7 @@ namespace SyntheticSoulMod
                 float dy = bossPos.y - playerPos.y;
                 state.distanceToBoss = Mathf.Sqrt(dx * dx + dy * dy);
 
+                // Normalizzazione posizione relativa
                 state.bossRelativeX = Mathf.Clamp(dx / 40.0f, -1.0f, 1.0f);
                 state.bossRelativeY = Mathf.Clamp(dy / 30.0f, -1.0f, 1.0f);
 
@@ -181,41 +190,83 @@ namespace SyntheticSoulMod
                 {
                     state.bossHealth = hm.hp;
                     state.bossDefeated = hm.hp <= 0;
+
+                    // MEMORY FIX: Aggiorna l'ultima vita nota
+                    if (hm.hp > 0) lastKnownBossHealth = hm.hp;
                 }
+                else
+                {
+                    // Fallback se HealthManager manca temporaneamente
+                    state.bossHealth = lastKnownBossHealth;
+                }
+
+                // Leggi l'intento dalla FSM PlayMaker
+                state.bossAction = GetBossIntent(boss);
             }
             else
             {
+                // Se il boss non c'è, usa valori di default sicuri e l'ultima vita nota
                 state.distanceToBoss = 100f;
                 state.bossRelativeX = 0f;
                 state.bossRelativeY = 0f;
+                state.bossAction = 0;
+                state.bossHealth = lastKnownBossHealth; // Non 0!
             }
 
+            // Il conteggio kill viene sovrascritto in SyntheticSoulMod.cs, ma lo lasciamo qui per completezza
             int killedCount = CountDeadMantisLords();
             state.mantisLordsKilled = killedCount;
-            if (killedCount != prevMantisLordsKilled)
-            {
-                prevMantisLordsKilled = killedCount;
-            }
         }
 
         // =================================================================
-        // NUOVA LOGICA: Trova il boss ATTIVO ignorando quelli sui troni
+        // LEGGE LA MENTE DEL BOSS (PlayMaker FSM)
+        // =================================================================
+        private int GetBossIntent(GameObject boss)
+        {
+            var fsm = boss.GetComponent<PlayMakerFSM>();
+            if (fsm == null) return 0; // Unknown
+
+            string activeState = fsm.ActiveStateName.ToLower();
+
+            // Mappatura delle azioni dei Mantis Lords
+            // 1: DASH (Attacco a terra)
+            if (activeState.Contains("dash") || activeState.Contains("lunge"))
+                return 1;
+
+            // 2: DROP (Attacco dall'alto)
+            if (activeState.Contains("land") || activeState.Contains("drop") || activeState.Contains("plunge"))
+                return 2;
+
+            // 3: THROW (Boomerang dal muro)
+            if (activeState.Contains("throw") || activeState.Contains("wall"))
+                return 3;
+
+            return 0; // Idle, Movement, or Unknown
+        }
+
+        // =================================================================
+        // TROVA IL BOSS VERO (Filtrando i Boomerang)
         // =================================================================
         private GameObject FindActiveMantisLord(Vector3 playerPos)
         {
             string[] lords = { "Mantis Lord", "Mantis Lord S1", "Mantis Lord S2" };
             List<GameObject> activeCandidates = new List<GameObject>();
 
-            // 1. Raccogli tutti i Mantis Lords vivi
             foreach (var name in lords)
             {
                 var obj = GameObject.Find(name);
                 if (obj != null)
                 {
                     var hm = obj.GetComponent<HealthManager>();
-                    if (hm != null && hm.hp > 0)
+                    // Filtro rigoroso: HP > 0 e nome che non contiene "Shot" o "Scythe"
+                    if (hm != null && hm.hp > 0 && !obj.name.ToLower().Contains("shot") && !obj.name.ToLower().Contains("scythe"))
                     {
-                        activeCandidates.Add(obj);
+                        var fsm = obj.GetComponent<PlayMakerFSM>();
+                        // Doppio controllo: deve avere la FSM del boss
+                        if (fsm != null && fsm.FsmName == "Mantis Lord")
+                        {
+                            activeCandidates.Add(obj);
+                        }
                     }
                 }
             }
@@ -223,15 +274,9 @@ namespace SyntheticSoulMod
             if (activeCandidates.Count == 0) return null;
             if (activeCandidates.Count == 1) return activeCandidates[0];
 
-            // 2. FILTRO ANTI-CAMPER:
-            // I Mantis Lords sui troni sono generalmente più in ALTO (Y) o molto LONTANI (X) dal centro.
-            // Strategia migliore: Il boss attivo è quello con la Y più BASSA (più vicino al pavimento).
-            // Quelli sui troni sono rialzati.
-
-            // Ordina per altezza (Y) crescente -> Il primo è quello più in basso (sul pavimento)
+            // FILTRO ANTI-CAMPER: Prendi quello più in basso (Y minore)
+            // I boss sui troni sono in alto, quello che combatte è a terra.
             activeCandidates.Sort((a, b) => a.transform.position.y.CompareTo(b.transform.position.y));
-
-            // Restituisci quello più in basso.
             return activeCandidates[0];
         }
 
@@ -251,72 +296,12 @@ namespace SyntheticSoulMod
             return count;
         }
 
-        // Debug per hazard scan
-        private float lastFullScanTime = 0f;
-        private float lastHazardLogTime = 0f;
-
         private void ExtractHazards(HeroController hero, GameState state)
         {
             var playerPos = hero.transform.position;
             var hazards = new List<HazardInfo>();
 
-            // ===============================================================
-            // DEBUG: Scan completo della scena ogni 10 secondi
-            // Questo ci mostra TUTTI gli oggetti che potrebbero essere spuntoni
-            // ===============================================================
-            if (Time.time - lastFullScanTime > 10.0f)
-            {
-                lastFullScanTime = Time.time;
-                DesktopLogger.Log("========== FULL HAZARD SCAN ==========");
-
-                // 1. Trova tutti gli oggetti con DamageHero
-                var allDamageHero = GameObject.FindObjectsOfType<DamageHero>();
-                DesktopLogger.Log($"[SCAN] Objects with DamageHero: {allDamageHero.Length}");
-                foreach (var dmg in allDamageHero)
-                {
-                    var obj = dmg.gameObject;
-                    float dist = Vector2.Distance(playerPos, obj.transform.position);
-                    if (dist < 25f)
-                    {
-                        var rb = obj.GetComponent<Rigidbody2D>();
-                        var col = obj.GetComponent<Collider2D>();
-                        string rbInfo = rb != null ? (rb.isKinematic ? "STATIC" : "MOVING") : "NO_RB";
-                        string colInfo = col != null ? (col.isTrigger ? "TRIGGER" : "SOLID") : "NO_COL";
-                        DesktopLogger.Log($"  [{rbInfo}][{colInfo}] {obj.name} | Layer={LayerMask.LayerToName(obj.layer)} | Dist={dist:F1}");
-                    }
-                }
-
-                // 2. Cerca specificamente nel layer "Interactive Object" o simili
-                DesktopLogger.Log("[SCAN] Checking all layers for damage zones...");
-                var allColliders = GameObject.FindObjectsOfType<Collider2D>();
-                foreach (var col in allColliders)
-                {
-                    string layerName = LayerMask.LayerToName(col.gameObject.layer);
-                    string objName = col.gameObject.name.ToLower();
-
-                    // Cerca oggetti che potrebbero essere spuntoni
-                    if (layerName.Contains("Hazard") || layerName.Contains("Damage") ||
-                        objName.Contains("spike") || objName.Contains("thorn") ||
-                        objName.Contains("hurt") || objName.Contains("damage") ||
-                        objName.Contains("kill") || objName.Contains("death"))
-                    {
-                        float dist = Vector2.Distance(playerPos, col.transform.position);
-                        if (dist < 20f)
-                        {
-                            DesktopLogger.Log($"  [POTENTIAL SPIKE] {col.gameObject.name} | Layer={layerName} | Trigger={col.isTrigger} | Dist={dist:F1}");
-                        }
-                    }
-                }
-                DesktopLogger.Log("========== END SCAN ==========");
-            }
-
-            // ===============================================================
-            // Rilevamento hazard normale
-            // ===============================================================
-            // Usa OverlapCircleAll CON tutti i layer (non filtrato)
             Collider2D[] hits = Physics2D.OverlapCircleAll(playerPos, HAZARD_DETECTION_RADIUS);
-
-            bool shouldLog = (Time.time - lastHazardLogTime > 2.0f);
 
             foreach (var hit in hits)
             {
@@ -332,69 +317,34 @@ namespace SyntheticSoulMod
                 var damageHero = hit.GetComponent<DamageHero>();
                 bool isStatic = (rb == null) || rb.isKinematic || (rb.velocity.magnitude < 0.1f);
 
-                // ============================================
-                // RILEVAMENTO SPUNTONI
-                // ============================================
-                // Metodo 1: Ha DamageHero ed è statico
-                if (damageHero != null && isStatic)
+                // SPUNTONI
+                if ((damageHero != null && isStatic) || name.Contains("spike") || name.Contains("thorn"))
                 {
                     isSpike = true;
                     hazardType = "spike";
                 }
 
-                // Metodo 2: Nome contiene parole chiave spuntoni
-                if (name.Contains("spike") || name.Contains("thorn") || name.Contains("spikes") ||
-                    name.Contains("hurt") || name.Contains("dvl_dmg"))
-                {
-                    isSpike = true;
-                    hazardType = "spike";
-                }
-
-                // Metodo 3: Layer è "Hazard" o simile
-                string layerName = LayerMask.LayerToName(hit.gameObject.layer);
-                if (layerName.Contains("Hazard") || layerName.Contains("Damage"))
-                {
-                    isSpike = true;
-                    hazardType = "spike";
-                }
-
-                // ============================================
-                // RILEVAMENTO PROIETTILI (si muovono!)
-                // ============================================
-                if (name.Contains("shot") || name.Contains("scythe") ||
-                    name.Contains("boomerang") || name.Contains("projectile") ||
-                    name.Contains("slash") || name.Contains("disc"))
-                {
-                    isProjectile = true;
-                    hazardType = "projectile";
-                }
-                // Ha DamageHero ma si muove = proiettile
-                else if (damageHero != null && !isStatic)
+                // PROIETTILI (Boomerang)
+                if (name.Contains("shot") || name.Contains("scythe") || name.Contains("boomerang") ||
+                   (damageHero != null && !isStatic))
                 {
                     isProjectile = true;
                     hazardType = "projectile";
                 }
 
-                // ============================================
-                // RILEVAMENTO NEMICI
-                // ============================================
+                // NEMICI
                 if (hit.gameObject.layer == LayerMask.NameToLayer("Enemies"))
                 {
-                    // Ignora Mantis Lords sui troni
-                    if (name.Contains("mantis") && hit.transform.position.y > playerPos.y + 5.0f)
-                    {
-                        continue;
-                    }
                     if (!isSpike && !isProjectile)
                     {
+                        if (name.Contains("mantis") && hit.transform.position.y > playerPos.y + 5.0f) continue;
+
                         isEnemy = true;
                         hazardType = "enemy";
                     }
                 }
 
-                bool isThreat = isSpike || isProjectile || isEnemy;
-
-                if (isThreat)
+                if (isSpike || isProjectile || isEnemy)
                 {
                     float dist = Vector2.Distance(playerPos, hit.transform.position);
 
@@ -403,34 +353,13 @@ namespace SyntheticSoulMod
                         type = hazardType,
                         relX = hit.transform.position.x - playerPos.x,
                         relY = hit.transform.position.y - playerPos.y,
-                        distance = dist
+                        distance = dist,
+                        velocityX = rb != null ? rb.velocity.x : 0f,
+                        velocityY = rb != null ? rb.velocity.y : 0f
                     };
-
-                    if (rb != null)
-                    {
-                        hInfo.velocityX = rb.velocity.x;
-                        hInfo.velocityY = rb.velocity.y;
-                    }
-
                     hazards.Add(hInfo);
-
-                    // Log hazard vicini
-                    if (shouldLog && dist < 5.0f)
-                    {
-                        DesktopLogger.Log($"[HAZARD] {hit.name} | Type={hazardType} | Dist={dist:F2} | Static={isStatic}");
-                    }
                 }
             }
-
-            if (shouldLog && hazards.Count > 0)
-            {
-                lastHazardLogTime = Time.time;
-                int spikes = hazards.Count(h => h.type == "spike");
-                int projectiles = hazards.Count(h => h.type == "projectile");
-                int enemies = hazards.Count(h => h.type == "enemy");
-                DesktopLogger.Log($"[HAZARD TOTAL] Spikes={spikes} Projectiles={projectiles} Enemies={enemies}");
-            }
-
             state.nearbyHazards = hazards.OrderBy(h => h.distance).Take(MAX_HAZARDS * 2).ToList();
         }
 
@@ -439,7 +368,9 @@ namespace SyntheticSoulMod
             return new GameState
             {
                 distanceToBoss = 100f,
-                terrainInfo = new float[] { 1, 1, 1, 1, 1 }
+                terrainInfo = new float[] { 1, 1, 1, 1, 1 },
+                bossAction = 0,
+                bossHealth = lastKnownBossHealth
             };
         }
     }

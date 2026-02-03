@@ -4,8 +4,8 @@ Multi-Instance Training Orchestrator for Hollow Knight AI.
 Permette di:
 - Scegliere l'agente (DQN o PPO)
 - Avviare multiple istanze in parallelo
-- Condividere experience buffer e modelli tra istanze
-- Sincronizzare i best model automaticamente
+- Condividere experience buffer e modelli tra istanze (Hall of Fame Top 3)
+- Sincronizzare i modelli automaticamente
 """
 
 import os
@@ -19,6 +19,7 @@ import numpy as np
 import json
 import shutil
 import filelock
+import random
 
 # Setup paths - Aggiungi la directory AI_Agents al path
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -29,27 +30,27 @@ from src.agents.dqn_agent import DQNAgent
 from src.agents.ppo_agent import PPOAgent
 from src.env.hollow_knight_env import HollowKnightEnv
 
-
-# ============ FILE-BASED SHARED STATE ============
+# ============ FILE-BASED SHARED STATE (HALL OF FAME VERSION) ============
 class FileBasedSharedState:
     """
-    Stato condiviso tra istanze usando file system.
+    Stato condiviso avanzato: Mantiene una Hall of Fame dei Top K modelli.
     Thread-safe tramite file locking.
     """
 
-    def __init__(self, checkpoint_dir: str, agent_type: str):
+    def __init__(self, checkpoint_dir: str, agent_type: str, keep_top_k: int = 3):
         self.checkpoint_dir = checkpoint_dir
         self.agent_type = agent_type
+        self.keep_top_k = keep_top_k  # Quanti modelli tenere (es. 3)
 
         # Setup directories
+        self.models_dir = os.path.join(checkpoint_dir, "best_pool")
+        os.makedirs(self.models_dir, exist_ok=True)
         os.makedirs(checkpoint_dir, exist_ok=True)
 
         # File paths
         self.log_file = os.path.join(checkpoint_dir, "training_log.txt")
         self.state_file = os.path.join(checkpoint_dir, "shared_state.json")
         self.lock_file = os.path.join(checkpoint_dir, ".lock")
-        self.best_model_path = os.path.join(checkpoint_dir, "best_model.pth")
-        self.best_meta_path = os.path.join(checkpoint_dir, "best_model_meta.json")
 
         # Initialize files
         self._init_files()
@@ -65,9 +66,12 @@ class FileBasedSharedState:
 
         # State file
         if not os.path.exists(self.state_file):
-            self._write_state(
-                {"best_reward": -float("inf"), "total_episodes": 0, "best_instance": -1}
-            )
+            # best_models è una lista di dict: [{'reward': float, 'path': str, 'instance': int}, ...]
+            self._write_state({
+                "best_models": [],
+                "total_episodes": 0,
+                "global_best_reward": -float("inf")
+            })
 
     def _read_state(self) -> dict:
         """Read shared state from file."""
@@ -76,15 +80,15 @@ class FileBasedSharedState:
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             return {
-                "best_reward": -float("inf"),
+                "best_models": [],
                 "total_episodes": 0,
-                "best_instance": -1,
+                "global_best_reward": -float("inf")
             }
 
     def _write_state(self, state: dict):
         """Write shared state to file."""
         with open(self.state_file, "w") as f:
-            json.dump(state, f)
+            json.dump(state, f, indent=2)
 
     def log_episode(
         self,
@@ -108,52 +112,85 @@ class FileBasedSharedState:
                 )
 
     def update_best_model(
-        self, instance_id: int, reward: float, model_path: str
+        self, instance_id: int, reward: float, source_model_path: str
     ) -> bool:
-        """Update best model if this instance achieved better reward."""
+        """
+        Controlla se il modello merita di entrare nella Hall of Fame (Top K).
+        Se sì, lo salva e rimuove il peggiore se la lista è piena.
+        """
         lock = filelock.FileLock(self.lock_file, timeout=10)
         with lock:
             state = self._read_state()
+            best_models = state.get("best_models", [])
 
-            if reward > state["best_reward"]:
-                state["best_reward"] = reward
-                state["best_instance"] = instance_id
-                self._write_state(state)
+            # Aggiorna il massimo globale per riferimento
+            state["global_best_reward"] = max(state.get("global_best_reward", -float('inf')), reward)
 
-                # Copy model
-                if os.path.exists(model_path):
-                    shutil.copy(model_path, self.best_model_path)
+            # Logica di inserimento
+            inserted = False
 
-                    # Save metadata
-                    with open(self.best_meta_path, "w") as f:
-                        json.dump(
-                            {
-                                "reward": reward,
-                                "instance": instance_id,
-                                "timestamp": datetime.now().isoformat(),
-                                "total_episodes": state["total_episodes"],
-                            },
-                            f,
-                            indent=2,
-                        )
+            # Se abbiamo meno di K modelli, o se il reward è migliore del peggiore dei nostri Top K
+            if len(best_models) < self.keep_top_k or (len(best_models) > 0 and reward > best_models[-1]['reward']):
 
-                print(
-                    f"\n[Instance {instance_id}] NEW GLOBAL BEST! Reward: {reward:.2f}"
-                )
-                return True
+                # 1. Crea nome file unico
+                timestamp_str = str(int(time.time()))
+                filename = f"model_rew{int(reward)}_inst{instance_id}_{timestamp_str}.pth"
+                dest_path = os.path.join(self.models_dir, filename)
 
-        return False
+                # 2. Copia il file
+                if os.path.exists(source_model_path):
+                    shutil.copy(source_model_path, dest_path)
 
-    def get_best_reward(self) -> float:
-        """Get current best reward."""
+                    # 3. Aggiungi alla lista
+                    new_entry = {
+                        "reward": reward,
+                        "path": dest_path,
+                        "instance": instance_id,
+                        "timestamp": timestamp_str
+                    }
+                    best_models.append(new_entry)
+
+                    # 4. Ordina per reward decrescente (Il migliore è index 0)
+                    best_models.sort(key=lambda x: x['reward'], reverse=True)
+
+                    # 5. Taglia la lista se troppo lunga e cancella il file vecchio
+                    while len(best_models) > self.keep_top_k:
+                        removed_entry = best_models.pop()    # Rimuove l'ultimo (il peggiore dei migliori)
+                        # Cancella fisicamente il file per non riempire il disco
+                        if os.path.exists(removed_entry['path']):
+                            try:
+                                os.remove(removed_entry['path'])
+                            except OSError:
+                                pass
+
+                    state["best_models"] = best_models
+                    self._write_state(state)
+
+                    rank = best_models.index(new_entry) + 1
+                    print(f"\n[Instance {instance_id}] ENTERED HALL OF FAME! Reward: {reward:.2f} (Rank {rank}/{self.keep_top_k})")
+                    inserted = True
+
+            return inserted
+
+    def get_any_best_model_path(self) -> Optional[str]:
+        """Restituisce un modello a caso dalla Top K per variare l'apprendimento."""
         state = self._read_state()
-        return state.get("best_reward", -float("inf"))
+        best_models = state.get("best_models", [])
 
-    def get_best_model_path(self) -> Optional[str]:
-        """Get path to best model if exists."""
-        if os.path.exists(self.best_model_path):
-            return self.best_model_path
+        if not best_models:
+            return None
+
+        # Pesca a caso uno dei modelli migliori
+        # Questo aiuta a evitare minimi locali: a volte proviamo la strategia del 1°, a volte del 2°
+        chosen = random.choice(best_models)
+        if os.path.exists(chosen['path']):
+            return chosen['path']
         return None
+
+    def get_global_best_reward(self) -> float:
+        """Restituisce il reward più alto mai visto."""
+        state = self._read_state()
+        return state.get("global_best_reward", -float("inf"))
 
     def increment_episodes(self) -> int:
         """Increment global episode counter."""
@@ -165,143 +202,93 @@ class FileBasedSharedState:
             return state["total_episodes"]
 
 
-# ============ PREPROCESSING FUNCTIONS ============
+# ============ PREPROCESSING FUNCTIONS (UPDATED) ============
 def preprocess_state_dqn(state_dict: dict) -> np.ndarray:
+    """
+    DQN State Preprocessing v3 - FIX NORMALIZZAZIONE
+    """
     features = []
 
-    # 1. Player Status
+    # 1. Player Status (5)
     features.append(state_dict.get("playerHealth", 0) / 10.0)
     features.append(state_dict.get("playerSoul", 0) / 100.0)
     features.append(float(state_dict.get("canDash", False)))
     features.append(float(state_dict.get("canAttack", False)))
     features.append(float(state_dict.get("isGrounded", False)))
 
-    # 2. Player Velocity
+    # 2. Player Velocity (2)
     features.append(np.clip(state_dict.get("playerVelocityX", 0.0) / 20.0, -1.0, 1.0))
     features.append(np.clip(state_dict.get("playerVelocityY", 0.0) / 20.0, -1.0, 1.0))
 
-    # 3. Terrain (Normalizzato per vedere meglio i muri/spuntoni)
-    terrain_info = state_dict.get("terrainInfo", [10.0] * 5)
+    # 3. Terrain (5) - CORRETTO!
+    # Il C# invia già valori normalizzati 0-1 (dove 0=vicino, 1=lontano/vuoto).
+    # NON dividere di nuovo per 20.0!
+    terrain_info = state_dict.get("terrainInfo", [1.0] * 5)
     if not terrain_info or len(terrain_info) < 5:
-        terrain_info = [10.0] * 5
-    # Dividiamo per 20.0 (distanza massima vista) per avere valori 0-1
-    features.extend([np.clip(t / 20.0, 0.0, 1.0) for t in terrain_info[:5]])
+        terrain_info = [1.0] * 5
+    # Usiamo direttamente i valori (clippati per sicurezza tecnica, ma senza divisione)
+    features.extend([np.clip(t, 0.0, 1.0) for t in terrain_info[:5]])
 
-    # 4. Boss Position
+    # 4. Boss Position (4)
     boss_rel_x = state_dict.get("bossRelativeX", 0.0)
     boss_rel_y = state_dict.get("bossRelativeY", 0.0)
     distance = state_dict.get("distanceToBoss", 50.0) / 50.0
     facing_boss = float(state_dict.get("isFacingBoss", False))
 
-    features.append(np.clip(boss_rel_x / 30.0, -1.0, 1.0))
-    features.append(np.clip(boss_rel_y / 30.0, -1.0, 1.0))
+    features.append(np.clip(boss_rel_x, -1.0, 1.0))        # C# invia già normalizzato -1 a 1? Controlla sotto*
+    features.append(np.clip(boss_rel_y, -1.0, 1.0))
     features.append(np.clip(distance, 0.0, 1.0))
     features.append(facing_boss)
 
-    # 5. Boss Velocity & Status
+    # 5.Boss Status & Kills(4)
     features.append(np.clip(state_dict.get("bossVelocityX", 0.0) / 20.0, -1.0, 1.0))
     features.append(np.clip(state_dict.get("bossVelocityY", 0.0) / 20.0, -1.0, 1.0))
     features.append(state_dict.get("bossHealth", 100.0) / 100.0)
     features.append(state_dict.get("mantisLordsKilled", 0) / 3.0)
 
-    # 6. HAZARDS (Doppio Occhio per i Boomerang)
+    # 6. BOSS INTENT (4 Features One-Hot)
+    boss_action = state_dict.get("bossAction", 0)
+    features.append(1.0 if boss_action == 0 else 0.0)
+    features.append(1.0 if boss_action == 1 else 0.0)
+    features.append(1.0 if boss_action == 2 else 0.0)
+    features.append(1.0 if boss_action == 3 else 0.0)
+
+    # 7. HAZARDS (10 Features)
     hazards = state_dict.get("nearbyHazards", [])
 
-    # Hazard 1 (Il più vicino)
-    if len(hazards) > 0:
-        h = hazards[0]
+    # Helper per hazard
+    def add_hazard_features(h):
+        # Hazard relative position: C# invia raw distance (dx, dy).
+        # Qui dobbiamo normalizzare. 15.0 è un buon range visivo.
         features.append(np.clip(h.get("relX", 0.0) / 15.0, -1.0, 1.0))
         features.append(np.clip(h.get("relY", 0.0) / 15.0, -1.0, 1.0))
         features.append(np.clip(h.get("velocityX", 0.0) / 20.0, -1.0, 1.0))
         features.append(np.clip(h.get("velocityY", 0.0) / 20.0, -1.0, 1.0))
         features.append(np.clip(h.get("distance", 15.0) / 15.0, 0.0, 1.0))
+
+    if len(hazards) > 0:
+        add_hazard_features(hazards[0])
     else:
         features.extend([0.0] * 5)
 
-    # Hazard 2 (Il secondo boomerang - CRUCIALE!)
     if len(hazards) > 1:
-        h = hazards[1]
-        features.append(np.clip(h.get("relX", 0.0) / 15.0, -1.0, 1.0))
-        features.append(np.clip(h.get("relY", 0.0) / 15.0, -1.0, 1.0))
-        features.append(np.clip(h.get("velocityX", 0.0) / 20.0, -1.0, 1.0))
-        features.append(np.clip(h.get("velocityY", 0.0) / 20.0, -1.0, 1.0))
-        features.append(np.clip(h.get("distance", 15.0) / 15.0, 0.0, 1.0))
+        add_hazard_features(hazards[1])
     else:
         features.extend([0.0] * 5)
 
     return np.array(features, dtype=np.float32)
-
-
 
 
 def preprocess_state_ppo(state_dict: dict) -> np.ndarray:
     """
-    ENHANCED STATE (26 features) - Combat-focused.
-    Include informazioni su boss velocity e stato combat.
+    PPO State Preprocessing. Aggiornato per coerenza con le nuove feature.
     """
-    features = []
-
-    # Player basics (5) - Status + soul
-    features.append(state_dict.get("playerHealth", 0) / 10.0)
-    features.append(state_dict.get("playerSoul", 0) / 100.0)  # Soul per spell
-    features.append(float(state_dict.get("canDash", False)))
-    features.append(float(state_dict.get("canAttack", False)))
-    features.append(float(state_dict.get("isGrounded", False)))
-
-    # Player velocity (2) - Per capire momentum
-    features.append(np.clip(state_dict.get("playerVelocityX", 0.0) / 20.0, -1.0, 1.0))
-    features.append(np.clip(state_dict.get("playerVelocityY", 0.0) / 20.0, -1.0, 1.0))
-
-    # Terrain (5) - raycasts
-    terrain_info = state_dict.get("terrainInfo", [1.0] * 5)
-    if len(terrain_info) < 5:
-        terrain_info = list(terrain_info) + [1.0] * (5 - len(terrain_info))
-    features.extend(terrain_info[:5])
-
-    # Boss position (4) - Direzione e distanza
-    boss_rel_x = state_dict.get("bossRelativeX", 0.0)
-    boss_rel_y = state_dict.get("bossRelativeY", 0.0)
-    distance = state_dict.get("distanceToBoss", 50.0) / 50.0
-    facing_boss = float(state_dict.get("isFacingBoss", False))
-
-    features.append(np.clip(boss_rel_x / 30.0, -1.0, 1.0))
-    features.append(np.clip(boss_rel_y / 30.0, -1.0, 1.0))
-    features.append(np.clip(distance, 0.0, 1.0))
-    features.append(facing_boss)
-
-    # Boss velocity (2) - Per prevedere movimento
-    features.append(np.clip(state_dict.get("bossVelocityX", 0.0) / 20.0, -1.0, 1.0))
-    features.append(np.clip(state_dict.get("bossVelocityY", 0.0) / 20.0, -1.0, 1.0))
-
-    # Boss health (1) - Per tracking progresso
-    features.append(state_dict.get("bossHealth", 100.0) / 100.0)
-
-    # Mantis killed (1) - Fase del fight
-    features.append(state_dict.get("mantisLordsKilled", 0) / 3.0)
-
-    # Hazards (5) - Il piÃ¹ vicino
-    hazards = state_dict.get("nearbyHazards", [])
-    if len(hazards) > 0:
-        h = hazards[0]
-        features.append(np.clip(h.get("relX", 0.0) / 15.0, -1.0, 1.0))
-        features.append(np.clip(h.get("relY", 0.0) / 15.0, -1.0, 1.0))
-        features.append(np.clip(h.get("velocityX", 0.0) / 20.0, -1.0, 1.0))
-        features.append(np.clip(h.get("velocityY", 0.0) / 20.0, -1.0, 1.0))
-        features.append(np.clip(h.get("distance", 15.0) / 15.0, 0.0, 1.0))
-    else:
-        features.extend([0.0, 0.0, 0.0, 0.0, 1.0])
-
-    if len(hazards) > 1:
-        h = hazards[1]
-        features.append(np.clip(h.get("relX", 0.0) / 15.0, -1.0, 1.0))
-        features.append(np.clip(h.get("relY", 0.0) / 15.0, -1.0, 1.0))
-    else:
-        features.extend([0.0] * 2)
-
-    return np.array(features, dtype=np.float32)
+    # Usiamo lo stesso preprocessore del DQN per ora per consistenza,
+    # dato che include già tutte le informazioni vitali.
+    return preprocess_state_dqn(state_dict)
 
 
-# ============ HYPERPARAMETERS INSTANCE WORKER FUNCTIONS ============
+# ============ WORKER FUNCTIONS ============
 def train_dqn_instance(
     instance_id: int,
     port: int,
@@ -311,17 +298,17 @@ def train_dqn_instance(
     batch_size: int = 256,
     learning_rate: float = 1e-4,
     gamma: float = 0.99,
-    epsilon_start: float = 0.5,
+    epsilon_start: float = 1.0,
     epsilon_end: float = 0.05,
-    epsilon_decay: int = 100000,
+    epsilon_decay: int = 30000,
     max_steps: int = 3000,
 ):
     """Worker function per training DQN di una singola istanza."""
 
     print(f"\n[Instance {instance_id}] Starting DQN training on port {port}")
 
-    # Create shared state handler
-    shared_state = FileBasedSharedState(checkpoint_dir, "dqn")
+    # Create shared state handler (Hall of Fame enabled)
+    shared_state = FileBasedSharedState(checkpoint_dir, "dqn", keep_top_k=3)
 
     # Instance-specific checkpoint dir
     instance_dir = os.path.join(checkpoint_dir, f"instance_{instance_id}")
@@ -340,28 +327,29 @@ def train_dqn_instance(
     state_size = len(state_array)
     action_size = 8  # 8 azioni (IDLE rimosso)
 
+    print(f"[Instance {instance_id}] State size: {state_size} features")
+
     # Initialize agent
     agent = DQNAgent(
         state_size=state_size,
         action_size=action_size,
         learning_rate=learning_rate,
         gamma=gamma,
-        buffer_capacity=100000,  # Aumentato
+        buffer_capacity=100000,
     )
 
-# Load best model if exists
-    best_model_path = shared_state.get_best_model_path()
+    # Try to load best model initially (random one from pool)
+    best_model_path = shared_state.get_any_best_model_path()
     if best_model_path:
         try:
             agent.load(best_model_path)
-            print(f"[Instance {instance_id}] Loaded shared best model")
+            print(f"[Instance {instance_id}] Loaded shared model from pool: {os.path.basename(best_model_path)}")
             agent.steps_done = 0
         except Exception as e:
-            print(f"[Instance {instance_id}] Could not load best model: {e}")
+            print(f"[Instance {instance_id}] Could not load model: {e}")
 
     global_step = agent.steps_done
     best_local_reward = -float("inf")
-
     for episode in range(num_episodes):
         state_dict = env.reset()
         state = preprocess_state_dqn(state_dict)
@@ -418,40 +406,39 @@ def train_dqn_instance(
         local_model_path = os.path.join(instance_dir, "latest.pth")
         agent.save(local_model_path)
 
-        # Update global best if needed (Se noi siamo i migliori, aggiorniamo gli altri)
+        # Update global best pool if needed
         if episode_reward > best_local_reward:
             best_local_reward = episode_reward
+            # Passa il file, la classe decide se salvarlo nella Hall of Fame
             shared_state.update_best_model(
                 instance_id, episode_reward, local_model_path
             )
 
-        # Sync with best model periodically (Se noi siamo scarsi, impariamo dagli altri)
+        # Sync with Hall of Fame periodically
         if (episode + 1) % sync_interval == 0:
-            best_model_path = shared_state.get_best_model_path()
-            best_reward = shared_state.get_best_reward()
+            target_model_path = shared_state.get_any_best_model_path()
+            global_best_reward = shared_state.get_global_best_reward()
 
-            # Scarica solo se il modello globale è significativamente migliore del nostro risultato attuale
-            if best_model_path and episode_reward < best_reward * 0.8:
+            # Scarica solo se stiamo performando decisamente peggio del migliore assoluto
+            if target_model_path and episode_reward < global_best_reward * 0.8:
                 try:
-                    # === FIX IMPORTANTE INIZIO ===
                     # 1. Salviamo i contatori attuali per NON resettare l'epsilon
                     current_steps = agent.steps_done
                     current_eps = agent.episodes_done
 
-                    # 2. Carichiamo i pesi del cervello migliore
-                    agent.load(best_model_path)
+                    # 2. Carichiamo i pesi di un modello random dalla Hall of Fame
+                    agent.load(target_model_path)
 
-                    # 3. Ripristiniamo i nostri contatori (l'esperienza di esplorazione resta la nostra)
+                    # 3. Ripristiniamo i contatori
                     agent.steps_done = current_steps
                     agent.episodes_done = current_eps
-                    # === FIX IMPORTANTE FINE ===
 
                     print(
-                        f"[Instance {instance_id}] Synced with best model (reward: {best_reward:.2f})"
+                        f"[Instance {instance_id}] Synced with Hall of Fame model: {os.path.basename(target_model_path)}"
                     )
                 except Exception as e:
                     print(
-                        f"[Instance {instance_id}] Could not sync with best model: {e}"
+                        f"[Instance {instance_id}] Could not sync with model: {e}"
                     )
 
         global_ep = shared_state.increment_episodes()
@@ -474,58 +461,56 @@ def train_ppo_instance(
     checkpoint_dir: str,
     num_episodes: int,
     sync_interval: int = 10,
-    learning_rate: float = 1e-4,  # Ridotto per stabilitÃ
-    gamma: float = 0.995,  # Aumentato per reward sparse
-    entropy_start: float = 0.05,  # Inizio moderato per esplorazione
-    entropy_end: float = 0.01,   # Fine basso per sfruttamento
-    update_interval: int = 1024,  # Ridotto per update piÃ¹ frequenti
+    learning_rate: float = 1e-4,
+    gamma: float = 0.995,
+    entropy_start: float = 0.05,
+    entropy_end: float = 0.01,
+    update_interval: int = 1024,
     max_steps: int = 6000,
 ):
     """Worker function per training PPO di una singola istanza."""
 
-    print(f"\n[Instance {instance_id}] Starting PPO V2 training on port {port}")
+    print(f"\n[Instance {instance_id}] Starting PPO training on port {port}")
 
-    # Create shared state handler
-    shared_state = FileBasedSharedState(checkpoint_dir, "ppo")
+    shared_state = FileBasedSharedState(checkpoint_dir, "ppo", keep_top_k=3)
 
-    # Instance-specific checkpoint dir
     instance_dir = os.path.join(checkpoint_dir, f"instance_{instance_id}")
     os.makedirs(instance_dir, exist_ok=True)
 
-    # Connect to environment
     try:
         env = HollowKnightEnv(host="localhost", port=port, use_reward_shaping=True)
     except Exception as e:
         print(f"[Instance {instance_id}] Failed to connect: {e}")
         return
 
-    # Get state size
+    # Get state size (updated)
     initial_state = env.reset()
     state_array = preprocess_state_ppo(initial_state)
     state_size = len(state_array)
-    action_size = 8  # 8 azioni (IDLE rimosso)
+    action_size = 8
 
-    # Initialize agent with LSTM
+    print(f"[Instance {instance_id}] State size: {state_size} features")
+
     agent = PPOAgent(
         state_size=state_size,
         action_size=action_size,
         learning_rate=learning_rate,
         gamma=gamma,
-        gae_lambda=0.97,  # Aumentato per better credit assignment
+        gae_lambda=0.97,
         entropy_coef=entropy_start,
-        use_lstm=True,  # Abilitato per pattern recognition
-        n_epochs=6,  # Aumentato per better learning
-        batch_size=128,  # Aumentato
+        use_lstm=True,
+        n_epochs=6,
+        batch_size=128,
     )
 
-    # Load best model if exists
-    best_model_path = shared_state.get_best_model_path()
+    # Load from pool
+    best_model_path = shared_state.get_any_best_model_path()
     if best_model_path:
         try:
             agent.load(best_model_path)
-            print(f"[Instance {instance_id}] Loaded shared best model")
+            print(f"[Instance {instance_id}] Loaded shared model from pool")
         except Exception as e:
-            print(f"[Instance {instance_id}] Could not load best model: {e}")
+            print(f"[Instance {instance_id}] Could not load model: {e}")
 
     best_local_reward = -float("inf")
 
@@ -544,20 +529,19 @@ def train_ppo_instance(
         critic_loss_sum = 0.0
         num_updates = 0
 
-        # Exploration rate con decadimento graduale
+        # Exploration bias setup
         if episode < 50:
-            explore_rate = 0.20  # 20% warmup
+            explore_rate = 0.20
         elif episode < 150:
-            explore_rate = 0.10  # 10% fase intermedia
+            explore_rate = 0.10
         elif episode < 300:
-            explore_rate = 0.05  # 5% raffinamento
+            explore_rate = 0.05
         else:
-            explore_rate = 0.02  # 2% mantenimento minimo
+            explore_rate = 0.02
 
         for step in range(max_steps):
-            # SMART EXPLORATION: bias verso azioni combat
             if np.random.random() < explore_rate:
-                # 60% chance di azione combat, 40% movimento
+                # 60% chance combat, 40% random
                 if np.random.random() < 0.6:
                     action = np.random.choice([5, 7])  # ATTACK, SPELL
                 else:
@@ -567,18 +551,13 @@ def train_ppo_instance(
             else:
                 action, log_prob, value = agent.select_action(state)
 
-            # Environment step
             next_state_dict, reward, done, info = env.step(action)
             next_state = preprocess_state_ppo(next_state_dict)
 
             episode_reward += reward
-
-            # Store transition
             agent.store_transition(state, action, log_prob, value, reward, done)
-
             state = next_state
 
-            # Update policy
             if len(agent.buffer) >= update_interval:
                 metrics = agent.learn()
                 if metrics:
@@ -589,7 +568,6 @@ def train_ppo_instance(
             if done:
                 break
 
-        # Final update
         if len(agent.buffer) > 0:
             metrics = agent.learn()
             if metrics:
@@ -597,12 +575,10 @@ def train_ppo_instance(
                 critic_loss_sum += metrics["critic_loss"]
                 num_updates += 1
 
-        # Episode complete
         avg_loss = (actor_loss_sum + critic_loss_sum) / max(num_updates, 1)
         mantis_killed = next_state_dict.get("mantisLordsKilled", 0)
         boss_hp = next_state_dict.get("bossHealth", 0)
 
-        # Log to shared state
         shared_state.log_episode(
             instance_id,
             episode + 1,
@@ -614,33 +590,29 @@ def train_ppo_instance(
             current_entropy,
         )
 
-        # Save local model
         local_model_path = os.path.join(instance_dir, "latest.pth")
         agent.save(local_model_path)
 
-        # Update global best if needed
         if episode_reward > best_local_reward:
             best_local_reward = episode_reward
             shared_state.update_best_model(
                 instance_id, episode_reward, local_model_path
             )
 
-        # Sync with best model periodically
+        # Sync with Hall of Fame
         if (episode + 1) % sync_interval == 0:
-            best_model_path = shared_state.get_best_model_path()
-            best_reward = shared_state.get_best_reward()
-            if best_model_path and episode_reward < best_reward * 0.7:
+            target_model_path = shared_state.get_any_best_model_path()
+            global_best_reward = shared_state.get_global_best_reward()
+
+            if target_model_path and episode_reward < global_best_reward * 0.7:
                 try:
-                    agent.load(best_model_path)
-                    print(f"[Instance {instance_id}] Synced with best model")
+                    agent.load(target_model_path)
+                    print(f"[Instance {instance_id}] Synced with Hall of Fame model")
                 except Exception as e:
-                    print(
-                        f"[Instance {instance_id}] Could not sync with best model: {e}"
-                    )
+                    print(f"[Instance {instance_id}] Could not sync: {e}")
 
         global_ep = shared_state.increment_episodes()
 
-        # Progress log
         if (episode + 1) % 5 == 0:
             print(
                 f"[Instance {instance_id}] Ep {episode+1}: R={episode_reward:.1f} | "
@@ -655,24 +627,8 @@ def train_ppo_instance(
 # ============ MAIN ORCHESTRATOR ============
 def main():
     parser = argparse.ArgumentParser(
-        description="Multi-Instance Training for Hollow Knight AI",
+        description="Multi-Instance Training for Hollow Knight AI (Hall of Fame Edition)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Esempi:
-  # Training DQN con 2 istanze
-  python multi_train.py --agent dqn --instances 2 --episodes 500
-
-  # Training PPO con 3 istanze su porte custom
-  python multi_train.py --agent ppo --instances 3 --base-port 5560
-
-  # Training singola istanza (equivalente a train_dqn.py)
-  python multi_train.py --agent dqn --instances 1
-
-Note:
-  - Ogni istanza richiede una copia di Hollow Knight in esecuzione
-  - Imposta SYNTHETIC_SOUL_PORT=<port> prima di avviare ogni gioco
-  - Le istanze condividono automaticamente il best model e l'experience buffer
-        """,
     )
 
     parser.add_argument(
@@ -686,73 +642,65 @@ Note:
         "--instances",
         type=int,
         default=1,
-        help="Numero di istanze da avviare (default: 1)",
+        help="Numero di istanze da avviare",
     )
     parser.add_argument(
         "--base-port",
         type=int,
         default=5555,
-        help="Porta base (istanze useranno base, base+1, base+2, ...)",
+        help="Porta base",
     )
     parser.add_argument(
         "--episodes",
         type=int,
         default=1000,
-        help="Numero di episodi per istanza (default: 1000)",
+        help="Numero di episodi per istanza",
     )
     parser.add_argument(
         "--sync-interval",
         type=int,
         default=10,
-        help="Intervallo di sincronizzazione modelli (default: 10 episodi)",
+        help="Intervallo di sincronizzazione modelli",
     )
     parser.add_argument(
         "--checkpoint-dir",
         type=str,
         default=None,
-        help="Directory per checkpoint (default: checkpoints_<agent>_multi)",
+        help="Directory per checkpoint",
     )
-
-    # Hyperparameters
     parser.add_argument(
         "--lr",
         type=float,
         default=None,
-        help="Learning rate (default: 1e-5 per DQN, 5e-4 per PPO)",
+        help="Learning rate",
     )
     parser.add_argument(
         "--gamma",
         type=float,
         default=None,
-        help="Discount factor (default: 0.99 per DQN, 0.98 per PPO)",
+        help="Discount factor",
     )
 
     args = parser.parse_args()
 
-    # Set defaults based on agent type
     if args.checkpoint_dir is None:
         args.checkpoint_dir = f"checkpoints_{args.agent}_multi"
 
     if args.lr is None:
-        args.lr = 1e-5 if args.agent == "dqn" else 1e-4  # PPO lr ridotto
+        args.lr = 1e-5 if args.agent == "dqn" else 1e-4
 
     if args.gamma is None:
-        args.gamma = 0.99 if args.agent == "dqn" else 0.995  # PPO gamma aumentato
+        args.gamma = 0.99 if args.agent == "dqn" else 0.995
 
-    # Full path for checkpoint dir
     checkpoint_dir_full = os.path.join(AI_AGENTS_DIR, args.checkpoint_dir)
 
     print("=" * 70)
-    print(f"MULTI-INSTANCE TRAINING - {args.agent.upper()}")
+    print(f"MULTI-INSTANCE TRAINING - {args.agent.upper()} (Top 3 Hall of Fame)")
     print("=" * 70)
-    print(f"  Agent Type:      {args.agent.upper()}")
     print(f"  Instances:       {args.instances}")
-    print(f"  Base Port:       {args.base_port}")
     print(f"  Episodes/Inst:   {args.episodes}")
     print(f"  Sync Interval:   {args.sync_interval}")
     print(f"  Checkpoint Dir:  {checkpoint_dir_full}")
-    print(f"  Learning Rate:   {args.lr}")
-    print(f"  Gamma:           {args.gamma}")
     print("=" * 70)
 
     print("\nPORTE DA CONFIGURARE:")
@@ -767,10 +715,8 @@ Note:
 
     input()
 
-    # Create checkpoint directory
     os.makedirs(checkpoint_dir_full, exist_ok=True)
 
-    # Start worker processes
     processes = []
 
     for i in range(args.instances):
@@ -786,17 +732,16 @@ Note:
             p = mp.Process(
                 target=train_ppo_instance,
                 args=(i, port, checkpoint_dir_full, args.episodes, args.sync_interval),
-                kwargs={"learning_rate": args.lr, "gamma": args.gamma},
+                kwargs={"learning_rate": args.lr, "gamma": args.gamma,
+                        },
             )
 
         processes.append(p)
         p.start()
         print(f"[Main] Started instance {i} on port {port}")
-        time.sleep(2)  # Stagger starts to avoid connection issues
+        time.sleep(2)
 
-    # Wait for all processes
     print("\n[Main] All instances started. Waiting for completion...")
-    print("[Main] Press Ctrl+C to stop all instances\n")
 
     try:
         for p in processes:
@@ -808,25 +753,11 @@ Note:
         for p in processes:
             p.join()
 
-    # Final summary
     print("\n" + "=" * 70)
     print("TRAINING COMPLETE!")
     print("=" * 70)
 
-    # Read final state
-    state_file = os.path.join(checkpoint_dir_full, "shared_state.json")
-    if os.path.exists(state_file):
-        with open(state_file, "r") as f:
-            final_state = json.load(f)
-        print(f"  Total Episodes:  {final_state.get('total_episodes', 'N/A')}")
-        print(f"  Best Reward:     {final_state.get('best_reward', 'N/A'):.2f}")
-
-    print(f"  Best Model:      {os.path.join(checkpoint_dir_full, 'best_model.pth')}")
-    print(f"  Training Log:    {os.path.join(checkpoint_dir_full, 'training_log.txt')}")
-    print("=" * 70)
-
 
 if __name__ == "__main__":
-    # Required for Windows multiprocessing
     mp.freeze_support()
     main()
