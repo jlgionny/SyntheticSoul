@@ -163,12 +163,41 @@ namespace SyntheticSoulMod
 
         private void ExtractBossState(HeroController hero, GameState state)
         {
-            // Usa la logica Smart per trovare il boss attivo (ignorando i troni e i boomerang)
-            GameObject boss = FindActiveMantisLord(hero.transform.position);
+            // 1. GESTIONE VITA (Somma Totale per Reward)
+            // L'IA vede un solo "Boss Gigante" che è la somma delle 3 mantidi.
+            float totalHealth = CalculateTotalMantisHealth();
 
-            if (boss != null)
+            if (totalHealth > 0)
             {
-                var bossPos = boss.transform.position;
+                state.bossHealth = totalHealth;
+                state.bossDefeated = false;
+                lastKnownBossHealth = totalHealth;
+            }
+            else
+            {
+                // Se la somma è 0, controlliamo se sono morte davvero
+                if (CountDeadMantisLords() >= 3)
+                {
+                    state.bossHealth = 0;
+                    state.bossDefeated = true;
+                }
+                else
+                {
+                    // Se siamo in transizione (es. una muore, le altre spawnano), mantieni l'ultimo valore
+                    state.bossHealth = lastKnownBossHealth;
+                }
+            }
+
+            // Aggiorna le kill (essenziale per il reward +10)
+            state.mantisLordsKilled = CountDeadMantisLords();
+
+            // 2. GESTIONE BERSAGLIO (Dove mirare)
+            // Continua a puntare quella attiva più vicina
+            GameObject activeBoss = FindActiveMantisLord(hero.transform.position);
+
+            if (activeBoss != null)
+            {
+                var bossPos = activeBoss.transform.position;
                 var playerPos = hero.transform.position;
 
                 state.bossX = bossPos.x;
@@ -177,45 +206,47 @@ namespace SyntheticSoulMod
                 float dx = bossPos.x - playerPos.x;
                 float dy = bossPos.y - playerPos.y;
                 state.distanceToBoss = Mathf.Sqrt(dx * dx + dy * dy);
-
-                // Normalizzazione posizione relativa
                 state.bossRelativeX = Mathf.Clamp(dx / 40.0f, -1.0f, 1.0f);
                 state.bossRelativeY = Mathf.Clamp(dy / 30.0f, -1.0f, 1.0f);
 
-                bool facingBoss = (dx > 0 && hero.cState.facingRight) || (dx < 0 && !hero.cState.facingRight);
-                state.isFacingBoss = facingBoss;
-
-                var hm = boss.GetComponent<HealthManager>();
-                if (hm != null)
-                {
-                    state.bossHealth = hm.hp;
-                    state.bossDefeated = hm.hp <= 0;
-
-                    // MEMORY FIX: Aggiorna l'ultima vita nota
-                    if (hm.hp > 0) lastKnownBossHealth = hm.hp;
-                }
-                else
-                {
-                    // Fallback se HealthManager manca temporaneamente
-                    state.bossHealth = lastKnownBossHealth;
-                }
-
-                // Leggi l'intento dalla FSM PlayMaker
-                state.bossAction = GetBossIntent(boss);
+                // Intenzione del boss attivo
+                state.bossAction = GetBossIntent(activeBoss);
             }
             else
             {
-                // Se il boss non c'è, usa valori di default sicuri e l'ultima vita nota
+                // Nessun boss attivo trovato (transizione o vittoria)
                 state.distanceToBoss = 100f;
-                state.bossRelativeX = 0f;
-                state.bossRelativeY = 0f;
                 state.bossAction = 0;
-                state.bossHealth = lastKnownBossHealth; // Non 0!
+            }
+        }
+
+        // --- CALCOLO SOMMA HP (Senza cambiare variabili) ---
+        private float CalculateTotalMantisHealth()
+        {
+            // Nomi interni delle Mantidi
+            string[] lords = { "Mantis Lord", "Mantis Lord S1", "Mantis Lord S2" };
+            float totalHp = 0;
+            bool foundAny = false;
+
+            foreach (var name in lords)
+            {
+                var obj = GameObject.Find(name);
+                if (obj != null)
+                {
+                    var hm = obj.GetComponent<HealthManager>();
+                    // Somma solo se è viva e attiva
+                    if (hm != null && hm.hp > 0)
+                    {
+                        totalHp += (float)hm.hp;
+                        foundAny = true;
+                    }
+                }
             }
 
-            // Il conteggio kill viene sovrascritto in SyntheticSoulMod.cs, ma lo lasciamo qui per completezza
-            int killedCount = CountDeadMantisLords();
-            state.mantisLordsKilled = killedCount;
+            // Se non trova nessuno, ritorna -1 così usiamo la memoria lastKnownBossHealth
+            if (!foundAny) return -1f;
+
+            return totalHp;
         }
 
         // =================================================================
@@ -282,20 +313,56 @@ namespace SyntheticSoulMod
 
         private int CountDeadMantisLords()
         {
-            string[] lords = { "Mantis Lord", "Mantis Lord S1", "Mantis Lord S2" };
-            int count = 0;
-            foreach (var name in lords)
+            int killed = 0;
+
+            // --- NOMI GAME OBJECT ---
+            string boss1Name = "Mantis Lord";      // Fase 1
+            string boss2Name = "Mantis Lord S1";   // Fase 2 (Sinistra)
+            string boss3Name = "Mantis Lord S2";   // Fase 2 (Destra)
+
+            var boss1 = GameObject.Find(boss1Name);
+            var boss2 = GameObject.Find(boss2Name);
+            var boss3 = GameObject.Find(boss3Name);
+
+            // --- LOGICA INTELLIGENTE ---
+
+            // 1. Controlliamo se siamo in FASE 2
+            // Se le mantidi della Fase 2 esistono e hanno vita, la Fase 1 è vinta per forza.
+            bool phase2Started = (boss2 != null && boss2.activeSelf && GetHealth(boss2) > 0) ||
+                                 (boss3 != null && boss3.activeSelf && GetHealth(boss3) > 0);
+
+            if (phase2Started)
             {
-                var obj = GameObject.Find(name);
-                if (obj != null)
-                {
-                    var hm = obj.GetComponent<HealthManager>();
-                    if (hm != null && hm.hp <= 0) count++;
-                }
+                // Se siamo in Fase 2, la prima è sicuramente sconfitta (anche se è seduta sul trono)
+                killed = 1;
+
+                // Ora contiamo se qualcuna della Fase 2 è morta
+                if (IsDead(boss2)) killed++;
+                if (IsDead(boss3)) killed++;
             }
-            return count;
+            else
+            {
+                // Se NON siamo in Fase 2, controlliamo solo la prima normale
+                if (IsDead(boss1)) killed++;
+            }
+
+            return killed;
         }
 
+        // Helper per leggere la vita in modo sicuro
+        private int GetHealth(GameObject obj)
+        {
+            if (obj == null) return 0;
+            var hm = obj.GetComponent<HealthManager>();
+            return (hm != null) ? hm.hp : 0;
+        }
+
+        // Helper per capire se è morto (o sparito)
+        private bool IsDead(GameObject obj)
+        {
+            if (obj == null || !obj.activeSelf) return true; // Sparito = Morto
+            return GetHealth(obj) <= 0;
+        }
         private void ExtractHazards(HeroController hero, GameState state)
         {
             var playerPos = hero.transform.position;

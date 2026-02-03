@@ -890,7 +890,7 @@ namespace SyntheticSoulMod
         }
 
         // ============ MODIFICA CRITICA: ProcessAIStep con lastHazardType ============
-        private void ProcessAIStep()
+       private void ProcessAIStep()
         {
             try
             {
@@ -907,23 +907,30 @@ namespace SyntheticSoulMod
                     return;
 
                 var gameState = stateExtractor.ExtractState();
-                // !!! FIX IMPORTANTE PER MANTIS KILLED !!!
-                // Sovrascriviamo il valore dell'extractor con il nostro contatore sicuro
-                // che viene aggiornato dall'evento OnHealthManagerDie
-                // ========================================================
+
+                // ============ FIX KILL TRACKING v2 ============
+                // Problema: A volte l'evento Die non scatta, ma l'Extractor vede HP <= 0.
+                // Soluzione: Prendiamo il valore massimo tra i due sistemi.
+
+                // 1. Se l'Extractor vede più morti di noi (es. evento perso), ci aggiorniamo
+                if (gameState.mantisLordsKilled > this.mantisLordsKilled)
+                {
+                    this.mantisLordsKilled = gameState.mantisLordsKilled;
+                    DesktopLogger.Log($"[Sync] Mantis Count corrected by Extractor: {this.mantisLordsKilled}");
+                }
+
+                // 2. Se noi abbiamo registrato una morte ma l'oggetto è sparito (Extractor=0),
+                // imponiamo la nostra memoria persistente.
                 gameState.mantisLordsKilled = this.mantisLordsKilled;
+                // ==============================================
 
                 lock (damageLock)
                 {
                     gameState.damageTaken = damageTakenSinceLastUpdate;
-
-                    // --- AGGIUNTA NUOVA ---
                     gameState.lastHazardType = lastHazardTypeDetected;
 
-                    // Reset dopo l'invio
                     damageTakenSinceLastUpdate = 0;
-                    lastHazardTypeDetected = 0; // Reset a 0, non a 1
-                    // ---------------------
+                    lastHazardTypeDetected = 0;
                 }
 
                 communicator.SendState(gameState);
