@@ -17,16 +17,21 @@ Grafici disponibili:
 
 Usage:
     # Singolo algoritmo
-    python generate_plots.py --mode dqn --dqn-log path/to/log.txt --output plots/
+    python generate_plots.py --mode dqn --dqn-log training_output_dqn/phase_1/training_log_dqn.csv
+
+    # PPO
+    python generate_plots.py --mode ppo --ppo-log training_output_ppo/phase_1/training_log_ppo.csv
 
     # Confronto DQN vs PPO
-    python generate_plots.py --mode compare --dqn-log dqn_log.txt --ppo-log ppo_log.txt
+    python generate_plots.py --mode compare \
+        --dqn-log training_output_dqn/phase_1/training_log_dqn.csv \
+        --ppo-log training_output_ppo/phase_1/training_log_ppo.csv
 
-    # Multi-istanza (da multi_train.py)
-    python generate_plots.py --mode multi --multi-log path/to/training_log.txt
+    # Multi-istanza (da train_ppo.py o train_dqn.py con --instances > 1)
+    python generate_plots.py --mode multi --multi-log training_output_ppo/phase_1/training_log_ppo.csv
 
     # Tutti i grafici per presentazione
-    python generate_plots.py --mode presentation --dqn-log log.txt --output slides/
+    python generate_plots.py --mode presentation --dqn-log log.csv --output slides/
 """
 
 import argparse
@@ -164,56 +169,84 @@ def compute_win_rate(mantis_killed: np.ndarray, window: int = 50) -> np.ndarray:
 
 
 def load_log(log_file: str) -> pd.DataFrame:
-    """Load training log with enhanced error handling and mapping."""
+    """
+    Load training log with enhanced error handling and column mapping.
+
+    Supports two CSV formats:
+
+      PPO (train_ppo.py → training_log_ppo.csv):
+        timestamp, instance_id, phase, episode, reward, steps,
+        mantis_killed, boss_hp, boss_defeated, entropy,
+        learning_rate, num_updates
+
+      DQN (train_dqn.py → training_log_dqn.csv):
+        timestamp, instance_id, phase, episode, reward, steps,
+        mantis_killed, boss_hp, boss_defeated, epsilon,
+        learning_rate, avg_loss
+    """
     if not os.path.exists(log_file):
         raise FileNotFoundError(f"Log file not found: {log_file}")
 
     df = pd.read_csv(log_file)
 
     # 1. Normalize Column Names
-    # Il log attuale usa: timestamp,instance,episode,reward,steps,boss_hp,mantis_killed,loss,epsilon_or_entropy
     column_mapping = {
         "total_reward": "reward",
-        "avg_loss": "loss",
+        "avg_loss": "loss",            # DQN log: avg_loss → loss
+        "instance_id": "instance",     # Both logs: instance_id → instance
     }
 
     for old, new in column_mapping.items():
         if old in df.columns and new not in df.columns:
             df[new] = df[old]
 
-    # 2. Smart Mapping for Exploration Metric
-    # Se troviamo "epsilon_or_entropy", cerchiamo di capire cos'è
-    if "epsilon_or_entropy" in df.columns:
-        # Euristica semplice: se i valori sono > 0.8 all'inizio, è probabile che sia Epsilon
-        first_val = df["epsilon_or_entropy"].iloc[0] if len(df) > 0 else 0
-        if first_val > 0.5:
-            df["epsilon"] = df["epsilon_or_entropy"] # DQN
-        else:
-            df["entropy"] = df["epsilon_or_entropy"] # PPO
+    # 2. Create unified "exploration" column
+    #    PPO logs have "entropy", DQN logs have "epsilon".
+    #    Plot functions look for "exploration", "epsilon", or "entropy".
+    if "epsilon" in df.columns and "exploration" not in df.columns:
+        df["exploration"] = df["epsilon"]
+    elif "entropy" in df.columns and "exploration" not in df.columns:
+        df["exploration"] = df["entropy"]
 
-        # Fallback generico
-        df["exploration"] = df["epsilon_or_entropy"]
+    # 3. Ensure numeric types (CSV values may arrive as strings)
+    numeric_cols = [
+        "reward", "steps", "mantis_killed", "boss_hp", "boss_defeated",
+        "epsilon", "entropy", "exploration", "learning_rate", "loss",
+        "num_updates", "episode", "instance", "phase",
+    ]
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # 3. Restore Reward Scale (Optional)
-    # Riporta i numeri a grandezza naturale (es. x5) per i grafici
+    # 4. Restore Reward Scale (Optional)
     if RESTORE_REWARD_SCALE and "reward" in df.columns:
         df["reward"] = df["reward"] * REWARD_SCALE_FACTOR
         if "total_reward" in df.columns:
-             df["total_reward"] = df["total_reward"] * REWARD_SCALE_FACTOR
+            df["total_reward"] = df["total_reward"] * REWARD_SCALE_FACTOR
 
     return df
 
 
 def get_algorithm_from_log(df: pd.DataFrame) -> str:
-    """Detect algorithm type from log columns."""
-    if "epsilon" in df.columns:
+    """
+    Detect algorithm type from log columns.
+    PPO logs have 'entropy' column, DQN logs have 'epsilon' column.
+    """
+    has_epsilon = "epsilon" in df.columns
+    has_entropy = "entropy" in df.columns
+
+    if has_epsilon and not has_entropy:
         return "DQN"
-    elif "entropy" in df.columns or "actor_loss" in df.columns:
+    elif has_entropy and not has_epsilon:
         return "PPO"
-    # Fallback basato sulla colonna generica
-    if "epsilon_or_entropy" in df.columns:
-        val = df["epsilon_or_entropy"].mean()
-        return "DQN" if val > 0.4 else "PPO" # DQN parte da 1.0, PPO entropy è bassa
+    elif has_epsilon and has_entropy:
+        # Both present (shouldn't happen, but fallback to heuristic)
+        return "DQN" if df["epsilon"].mean() > 0.4 else "PPO"
+
+    # Last resort: check exploration column
+    if "exploration" in df.columns:
+        return "DQN" if df["exploration"].mean() > 0.4 else "PPO"
+
     return "Unknown"
 
 
@@ -558,8 +591,14 @@ def plot_mantis_progress(
 
 
 def plot_multi_instance(df: pd.DataFrame, output_dir: str, window: int = 30):
+    # Resolve column name: load_log maps instance_id → instance,
+    # but add fallback in case raw DataFrame is passed directly
+    if "instance" not in df.columns and "instance_id" in df.columns:
+        df = df.copy()
+        df["instance"] = df["instance_id"]
+
     if "instance" not in df.columns:
-        print("  [SKIP] Multi-instance plot - 'instance' column not found")
+        print("  [SKIP] Multi-instance plot - no 'instance' or 'instance_id' column found")
         return
 
     instances = df["instance"].unique()

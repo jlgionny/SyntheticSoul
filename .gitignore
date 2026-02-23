@@ -1,84 +1,64 @@
-###########################
-# FILE DI COMPILAZIONE
-###########################
-[Bb]in/
-[Oo]bj/
+# ═══════════════════════════════════════════════════════════════
+#  Synthetic Soul — Hollow Knight Mantis Lords RL Bot
+# ═══════════════════════════════════════════════════════════════
 
-###########################
-# IDE E EDITOR
-###########################
+# ──── Training Outputs ────
+training_output/
+training_output_ppo/
+training_output_dqn/
+**/phase_*/
 
-# Visual Studio (Classico)
-.vs/
-*.user
-*.userosscache
-*.sln.docstates
-*.suo
+# ──── Training Logs (CSV) ────
+**/training_log_ppo.csv
+**/training_log_dqn.csv
+**/training_log.csv
 
-# JetBrains Rider
-.idea/
-*.sln.iml
-
-###########################
-# SISTEMA OPERATIVO
-###########################
-# Windows
-Thumbs.db
-ehthumbs.db
-Desktop.ini
-
-# Mac
-.DS_Store
-
-###########################
-# FILE SPECIFICI MODDING
-###########################
-
-*.dll
-*.pdb
-*.xml
-
-# Log generati localmente
-*.log
-modlog.txt
-
-###########################
-# FILE SPECIFICI AGENTI
-###########################
-
-# File compilati Python
-__pycache__/
-*.pyc
-
-# Tutte le cartelle plots con sottocartelle episodi
-plots_dqn/
-plots_ppo/
-plots/
-plots_*/
-
-# Modelli salvati
-checkpoints*/
-checkpoints_ppo_optimized/
+# ──── Model Checkpoints ────
 *.pth
 *.pt
-*.ckpt
-*.h5
-*.hdf5
-checkpoints_dqn_multi/
-checkpoints_ppo_multi/
+*.onnx
+**/best_pool/
+**/hof_*.pth
 
-# Log di training
-training_log.txt
-training_log.csv
-training_log_ppo.txt
-training_log_dqn.txt
+# ──── Hall of Fame State ────
+**/shared_state.json
+**/shared_state.lock
+
+# ──── Plots ────
+plots/
+**/plots/
+*.png
+!docs/*.png
+
+# ──── Python ────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+
+# ──── IDE / Editor ────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ──── Unity / C# ────
+[Bb]in/
+[Oo]bj/
+*.dll
+*.pdb
+*.user
+*.suo
+
+# ──── Misc ────
 *.log
+*.tmp
 
-# TensorBoard logs
-tensorboard/
-runs/
-tb_logs/
-lightning_logs/
-
+# ──── Bat ────
 *.bat
-

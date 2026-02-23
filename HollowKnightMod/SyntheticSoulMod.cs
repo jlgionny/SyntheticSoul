@@ -25,7 +25,6 @@ namespace SyntheticSoulMod
         private bool wasConnected = false;
 
         // ============ TRAINING SPEED ============
-        // NOTA: Velocità 1x per evitare ritardi con l'agente
         private const float TRAINING_TIMESCALE = 1.0f;
         private bool trainingSpeedActive = false;
         private bool autoSpawnTriggered = false;
@@ -47,15 +46,14 @@ namespace SyntheticSoulMod
 
         // ============ DAMAGE ACCUMULATOR ============
         private int damageTakenSinceLastUpdate = 0;
-
-        // --- AGGIUNTA NUOVA ---
         private int lastHazardTypeDetected = 0;
-        // ---------------------
-
         private readonly object damageLock = new object();
 
         // ============ RELOAD SAFETY ============
         private bool ignoreDamageUntilReady = false;
+
+        // ============ VICTORY TRACKER (v10) ============
+        private VictoryTracker victoryTracker;
 
         public static SyntheticSoulMod Instance
         {
@@ -72,17 +70,18 @@ namespace SyntheticSoulMod
             _instance = this;
         }
 
-        public override string GetVersion() => "9.5.0.0";
+        public override string GetVersion() => "10.0.0.0";
 
         public override void Initialize(Dictionary<string, Dictionary<string, GameObject>> preloadedObjects)
         {
-            Log("Initializing SyntheticSoul Mod v9.5.0 (AUTO-SPAWN + 1X SPEED)...");
-            DesktopLogger.Log("=== SYNTHETIC SOUL MOD v9.5.0 - AUTO-SPAWN + 1X SPEED ===");
+            Log("Initializing SyntheticSoul Mod v10.0 (ATTACK PATTERNS + VICTORY TRACKER)...");
+            DesktopLogger.Log("=== SYNTHETIC SOUL MOD v10.0 — ATTACK PATTERNS + VICTORY TRACKER ===");
 
             PORT = DEFAULT_PORT;
             try
             {
-                string gameDir = System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+                string gameDir = System.IO.Path.GetDirectoryName(
+                    System.Reflection.Assembly.GetExecutingAssembly().Location);
                 DesktopLogger.Log($"[Config] DLL location: {gameDir}");
 
                 string[] possiblePaths = new string[]
@@ -100,11 +99,9 @@ namespace SyntheticSoulMod
                     try
                     {
                         string fullPath = System.IO.Path.GetFullPath(path);
-                        DesktopLogger.Log($"[Config] Checking: {fullPath}");
                         if (System.IO.File.Exists(fullPath))
                         {
                             string content = System.IO.File.ReadAllText(fullPath).Trim();
-                            DesktopLogger.Log($"[Config] Found file with content: '{content}'");
                             if (int.TryParse(content, out int filePort))
                             {
                                 PORT = filePort;
@@ -130,19 +127,28 @@ namespace SyntheticSoulMod
                 }
 
                 if (PORT == DEFAULT_PORT)
-                {
                     DesktopLogger.Log($"[Config] Using default port: {PORT}");
-                }
             }
             catch (Exception e)
             {
-                DesktopLogger.LogError($"[Config] Error reading port config: {e.Message}");
+                DesktopLogger.LogError($"[Config] Error: {e.Message}");
                 PORT = DEFAULT_PORT;
             }
 
             stateExtractor = new GameStateExtractor();
             actionExecutor = new ActionExecutor();
             communicator = new SocketCommunicator(PORT);
+
+            // ═══ VICTORY TRACKER ═══
+            victoryTracker = new VictoryTracker();
+            // FIX: Tempi ridotti per evitare che HoG cambi scena automaticamente
+            victoryTracker.VictoryWaitTime = 0.5f;
+            victoryTracker.VictoryTimeout = 1.0f;
+            victoryTracker.WaitForPlayerDataConfirmation = false;
+            victoryTracker.OnVictoryConfirmed += (result) =>
+            {
+                DesktopLogger.Log($"[Mod] Victory callback: Wins={result.totalWins} Streak={result.streak} HoG={result.hogDataUpdated}");
+            };
 
             ModHooks.HeroUpdateHook += OnHeroUpdate;
             ModHooks.AfterTakeDamageHook += OnTakeDamage;
@@ -151,12 +157,10 @@ namespace SyntheticSoulMod
             UnityEngine.SceneManagement.SceneManager.activeSceneChanged += OnSceneChanged;
 
             Log("SyntheticSoul Mod initialized! Starting persistent server...");
-
             try
             {
                 communicator.StartServer();
                 isTraining = true;
-                Log("Persistent server started!");
                 DesktopLogger.Log("✓ Server ready");
             }
             catch (Exception e)
@@ -166,15 +170,16 @@ namespace SyntheticSoulMod
             }
 
             originalFixedDeltaTime = Time.fixedDeltaTime;
-            Log("SyntheticSoul Mod ready!");
-            DesktopLogger.Log("✓ Boss FSM monitoring active");
+            DesktopLogger.Log("✓ Attack Pattern Detection active");
+            DesktopLogger.Log("✓ Victory Tracker active");
             DesktopLogger.Log("✓ Mantis Lords multi-kill tracking enabled");
-            DesktopLogger.Log($"✓ Training speed: {TRAINING_TIMESCALE}x when connected");
-            DesktopLogger.Log($"✓ Physics-safe timeScale implementation");
-            DesktopLogger.Log($"✓ Listening on port {PORT}");
+            DesktopLogger.Log($"✓ Training speed: {TRAINING_TIMESCALE}x | Port: {PORT}");
             DesktopLogger.Log("✓ Auto-spawn to GG_Mantis_Lords on connect");
         }
 
+        // ════════════════════════════════════════════════════════
+        // TRAINING SPEED
+        // ════════════════════════════════════════════════════════
         private void SetTrainingSpeed(bool enable)
         {
             if (enable)
@@ -184,9 +189,8 @@ namespace SyntheticSoulMod
                     trainingSpeedActive = true;
                     if (originalFixedDeltaTime <= 0f)
                         originalFixedDeltaTime = Time.fixedDeltaTime;
-
                     Time.timeScale = TRAINING_TIMESCALE;
-                    DesktopLogger.Log($"[Speed] TimeScale = {TRAINING_TIMESCALE}x, FixedDeltaTime = {Time.fixedDeltaTime}");
+                    DesktopLogger.Log($"[Speed] TimeScale = {TRAINING_TIMESCALE}x");
                 }
             }
             else
@@ -205,30 +209,22 @@ namespace SyntheticSoulMod
         {
             if (!trainingSpeedActive) return;
             if (communicator == null || !communicator.IsConnected) return;
-
             if (Math.Abs(Time.timeScale - TRAINING_TIMESCALE) > 0.01f)
-            {
                 Time.timeScale = TRAINING_TIMESCALE;
-            }
         }
+
+        // ════════════════════════════════════════════════════════
+        // SCENE MANAGEMENT
+        // ════════════════════════════════════════════════════════
         private void OnSceneChanged(Scene from, Scene to)
         {
-            if (sceneChangeHandled)
-            {
-                return;
-            }
-
+            if (sceneChangeHandled) return;
             sceneChangeHandled = true;
 
             if (trainingSpeedActive && communicator != null && communicator.IsConnected)
-            {
                 SetTrainingSpeed(true);
-                DesktopLogger.Log($"[Scene] Training speed maintained at {TRAINING_TIMESCALE}x");
-            }
             else if (trainingSpeedActive)
-            {
                 SetTrainingSpeed(false);
-            }
 
             currentScene = to.name;
             episodeEnded = false;
@@ -244,19 +240,25 @@ namespace SyntheticSoulMod
                 if (IsBossScene(currentScene))
                 {
                     lastBossScene = currentScene;
-                }
 
-                if (isReloading)
-                {
-                    GameManager.instance.StartCoroutine(RestoreHeroAfterReload());
+                    // ═══ FIX: OnEpisodeStart SOLO per scene di boss veri (non Workshop/Atrium) ═══
+                    if (victoryTracker != null && IsActualBossFight(currentScene))
+                    {
+                        victoryTracker.OnEpisodeStart();
+                    }
+
+                    if (isReloading)
+                    {
+                        GameManager.instance.StartCoroutine(RestoreHeroAfterReload());
+                    }
                 }
             }
             else
             {
                 isInBossArena = false;
-                isReloading = false;
             }
 
+            isReloading = false;
             GameManager.instance.StartCoroutine(ResetSceneChangeFlag());
         }
 
@@ -266,15 +268,23 @@ namespace SyntheticSoulMod
             sceneChangeHandled = false;
         }
 
+        // ═══ FIX: Helper per identificare scene di boss veri ═══
+        private bool IsActualBossFight(string sceneName)
+        {
+            // Escludi hub e lobby
+            return sceneName.StartsWith("GG_") &&
+                   sceneName != "GG_Workshop" &&
+                   sceneName != "GG_Atrium" &&
+                   sceneName != "GG_Waterways";
+        }
+
+        // ════════════════════════════════════════════════════════
+        // HERO RESTORATION AFTER RELOAD
+        // ════════════════════════════════════════════════════════
         private IEnumerator RestoreHeroAfterReload()
         {
-            DesktopLogger.Log("[Restore] ═══════════════════════════════════════");
-            DesktopLogger.Log("[Restore] ═══ SCENE RESTORATION v9.3.0 ═══");
-            DesktopLogger.Log("[Restore] ═══════════════════════════════════════");
-
+            DesktopLogger.Log("[Restore] ═══ SCENE RESTORATION v10.0 ═══");
             ignoreDamageUntilReady = true;
-            DesktopLogger.Log("[Restore] Damage tracking DISABLED");
-
             yield return new WaitForSeconds(0.1f);
 
             float timeout = 0f;
@@ -293,13 +303,11 @@ namespace SyntheticSoulMod
             }
 
             var hero = HeroController.instance;
-            DesktopLogger.Log($"[Restore] ✓ Hero found: {hero.gameObject.name}");
-
             yield return new WaitForSeconds(0.05f);
+
             CleanupDuplicateHeroesOnly();
             CleanupDeathObjects();
 
-            DesktopLogger.Log("[Restore] Waiting for Knight entrance animation to complete...");
             timeout = 0f;
             while (hero.cState.transitioning && timeout < 6f)
             {
@@ -307,17 +315,13 @@ namespace SyntheticSoulMod
                 timeout += 0.1f;
             }
 
-            DesktopLogger.Log($"[Restore] Transition complete. Hero transitioning: {hero.cState.transitioning}");
-
             yield return new WaitForEndOfFrame();
             yield return new WaitForSeconds(0.1f);
 
             PlayMakerFSM bossFSM = FindBossFSM();
             if (bossFSM != null)
             {
-                DesktopLogger.Log($"[Restore] Boss FSM found: {bossFSM.gameObject.name} - FSM: {bossFSM.FsmName}");
-                DesktopLogger.Log($"[Restore] Current boss state: {bossFSM.ActiveStateName}");
-
+                DesktopLogger.Log($"[Restore] Boss FSM: {bossFSM.gameObject.name}.{bossFSM.FsmName}");
                 timeout = 0f;
                 string previousState = bossFSM.ActiveStateName;
                 bool bossIntroStarted = false;
@@ -330,28 +334,22 @@ namespace SyntheticSoulMod
                     string currentState = bossFSM.ActiveStateName;
                     if (currentState != previousState)
                     {
-                        DesktopLogger.Log($"[Restore] Boss state changed: {previousState} -> {currentState}");
                         previousState = currentState;
                         bossIntroStarted = true;
                     }
 
                     if (bossIntroStarted && !IsIntroState(currentState))
                     {
-                        DesktopLogger.Log($"[Restore] ✓ Boss intro complete! Active state: {currentState}");
+                        DesktopLogger.Log($"[Restore] ✓ Boss intro complete: {currentState}");
                         break;
                     }
                 }
-
-                if (timeout >= 5f)
-                    DesktopLogger.Log("[Restore] ⚠ Boss intro timeout - proceeding anyway");
             }
             else
             {
-                DesktopLogger.Log("[Restore] No boss FSM found - using fixed delay");
                 yield return new WaitForSeconds(2.5f);
             }
 
-            DesktopLogger.Log("[Restore] Setting hero health...");
             var pd = PlayerData.instance;
             if (pd != null)
             {
@@ -359,15 +357,10 @@ namespace SyntheticSoulMod
                 pd.MPCharge = 0;
                 pd.MPReserve = 0;
                 pd.isInvincible = false;
-                DesktopLogger.Log($"[Reset] PlayerData: HP={pd.health}/{pd.maxHealth}");
             }
 
             hero.MaxHealth();
-            if (hero.cState.dead)
-            {
-                hero.cState.dead = false;
-                DesktopLogger.Log("[Reset] Cleared dead flag");
-            }
+            if (hero.cState.dead) hero.cState.dead = false;
 
             var spriteRenderer = hero.GetComponent<SpriteRenderer>();
             if (spriteRenderer != null)
@@ -378,7 +371,6 @@ namespace SyntheticSoulMod
 
             if (!hero.acceptingInput)
             {
-                DesktopLogger.Log("[Restore] ⚠ Forcing input control...");
                 hero.RegainControl();
                 hero.AcceptInput();
 
@@ -389,34 +381,50 @@ namespace SyntheticSoulMod
                     yield return new WaitForSeconds(0.05f);
                 }
             }
-            else
-            {
-                DesktopLogger.Log("[Restore] ✓ Hero already has input control");
-            }
 
             yield return new WaitForSeconds(0.2f);
-            ignoreDamageUntilReady = false;
-            DesktopLogger.Log("[Restore] Damage tracking ENABLED");
 
+            ignoreDamageUntilReady = false;
             lock (damageLock)
             {
                 damageTakenSinceLastUpdate = 0;
-
-                // --- AGGIUNTA NUOVA ---
                 lastHazardTypeDetected = 0;
-                // ---------------------
             }
 
             yield return new WaitForSeconds(0.1f);
             isReloading = false;
 
-            DesktopLogger.Log($"[Restore] ✓ Hero HP: {PlayerData.instance.health}/{PlayerData.instance.maxHealth}");
-            DesktopLogger.Log($"[Restore] ✓ Accepting Input: {hero.acceptingInput}");
-            DesktopLogger.Log($"[Restore] ✓ Hero dead state: {hero.cState.dead}");
-            DesktopLogger.Log($"[Restore] ✓ Hero transitioning: {hero.cState.transitioning}");
-            DesktopLogger.Log("[Restore] ═══════════════════════════════════════");
-            DesktopLogger.Log("[Restore] ✓✓✓ RESTORATION COMPLETE ✓✓✓");
-            DesktopLogger.Log("[Restore] ═══════════════════════════════════════");
+            DesktopLogger.Log($"[Restore] ✓✓✓ COMPLETE | HP: {PlayerData.instance?.health}/{PlayerData.instance?.maxHealth}");
+        }
+
+        // ════════════════════════════════════════════════════════
+        // AUTO-SPAWN & CLEANUP
+        // ════════════════════════════════════════════════════════
+        private IEnumerator AutoSpawnToMantisArena()
+        {
+            DesktopLogger.Log("[AutoSpawn] ═══ TELEPORTING TO MANTIS LORDS ═══");
+            yield return new WaitForSeconds(0.5f);
+
+            if (GameManager.instance == null)
+            {
+                DesktopLogger.LogError("[AutoSpawn] GameManager not available!");
+                autoSpawnTriggered = false;
+                yield break;
+            }
+
+            var pd = PlayerData.instance;
+            if (pd != null)
+            {
+                pd.bossRushMode = true;
+                pd.SetBool("atBench", false);
+            }
+
+            isReloading = true;
+            ignoreDamageUntilReady = true;
+            SetTrainingSpeed(true);
+            sceneChangeHandled = false;
+            UnityEngine.SceneManagement.SceneManager.LoadScene("GG_Mantis_Lords");
+            DesktopLogger.Log("[AutoSpawn] Scene load initiated!");
         }
 
         private PlayMakerFSM FindBossFSM()
@@ -432,21 +440,14 @@ namespace SyntheticSoulMod
                     foreach (var fsm in fsms)
                     {
                         string fsmName = fsm.FsmName.ToLower();
-                        if (fsmName.Contains("control") ||
-                            fsmName.Contains("boss") ||
-                            fsmName.Contains("attack") ||
-                            fsmName == "mantis" ||
-                            fsmName == "hornet" ||
-                            fsmName == "mawlek")
-                        {
-                            DesktopLogger.Log($"[FSM] Found potential boss FSM: {fsm.gameObject.name}.{fsm.FsmName}");
+                        if (fsmName.Contains("control") || fsmName.Contains("boss") ||
+                            fsmName.Contains("attack") || fsmName == "mantis" ||
+                            fsmName == "hornet" || fsmName == "mawlek")
                             return fsm;
-                        }
                     }
                 }
 
-                string[] bossObjectNames = new string[]
-                {
+                string[] bossObjectNames = {
                     "Mantis Lord", "Hornet Boss", "Mawlek Body",
                     "False Knight", "Mega Moss Charger", "Hive Knight",
                     "Dung Defender", "Traitor Lord", "Giant Buzzer"
@@ -458,11 +459,7 @@ namespace SyntheticSoulMod
                     if (bossObj != null)
                     {
                         PlayMakerFSM fsm = bossObj.GetComponent<PlayMakerFSM>();
-                        if (fsm != null)
-                        {
-                            DesktopLogger.Log($"[FSM] Found boss by name: {bossObj.name}");
-                            return fsm;
-                        }
+                        if (fsm != null) return fsm;
                     }
                 }
             }
@@ -478,46 +475,9 @@ namespace SyntheticSoulMod
         {
             if (string.IsNullOrEmpty(stateName)) return false;
             string state = stateName.ToLower();
-            return state.Contains("idle") ||
-                   state.Contains("sleep") ||
-                   state.Contains("roar") ||
-                   state.Contains("intro") ||
-                   state.Contains("wake") ||
-                   state.Contains("init") ||
+            return state.Contains("idle") || state.Contains("sleep") || state.Contains("roar") ||
+                   state.Contains("intro") || state.Contains("wake") || state.Contains("init") ||
                    state == "start";
-        }
-
-        private IEnumerator AutoSpawnToMantisArena()
-        {
-            DesktopLogger.Log("[AutoSpawn] ═══════════════════════════════════════");
-            DesktopLogger.Log("[AutoSpawn] ═══ TELEPORTING TO MANTIS LORDS ═══");
-            DesktopLogger.Log("[AutoSpawn] ═══════════════════════════════════════");
-
-            yield return new WaitForSeconds(0.5f);
-
-            if (GameManager.instance == null)
-            {
-                DesktopLogger.LogError("[AutoSpawn] GameManager not available!");
-                autoSpawnTriggered = false;
-                yield break;
-            }
-
-            var pd = PlayerData.instance;
-            if (pd != null)
-            {
-                pd.bossRushMode = true;
-                pd.SetBool("atBench", false);
-                DesktopLogger.Log("[AutoSpawn] PlayerData configured for boss rush");
-            }
-
-            isReloading = true;
-            ignoreDamageUntilReady = true;
-            SetTrainingSpeed(true);
-            DesktopLogger.Log("[AutoSpawn] Loading GG_Mantis_Lords...");
-
-            sceneChangeHandled = false;
-            UnityEngine.SceneManagement.SceneManager.LoadScene("GG_Mantis_Lords");
-            DesktopLogger.Log("[AutoSpawn] Scene load initiated!");
         }
 
         private void CleanupDuplicateHeroesOnly()
@@ -525,11 +485,7 @@ namespace SyntheticSoulMod
             try
             {
                 var currentHero = HeroController.instance;
-                if (currentHero == null)
-                {
-                    DesktopLogger.Log("[Cleanup] No current hero, skipping cleanup");
-                    return;
-                }
+                if (currentHero == null) return;
 
                 GameObject currentHeroGO = currentHero.gameObject;
                 GameObject[] allRootObjects = GetAllRootGameObjects();
@@ -542,7 +498,6 @@ namespace SyntheticSoulMod
                     string name = obj.name.ToLower();
                     if (name.Contains("(clone)") && (name.Contains("knight") || name.Contains("hero")))
                     {
-                        DesktopLogger.Log($"[Cleanup] Removing clone: {obj.name}");
                         GameObject.Destroy(obj);
                         cleaned++;
                         continue;
@@ -553,7 +508,6 @@ namespace SyntheticSoulMod
                         var heroCtrl = obj.GetComponent<HeroController>();
                         if (heroCtrl != null && heroCtrl != currentHero)
                         {
-                            DesktopLogger.Log($"[Cleanup] Removing duplicate Knight with HeroController");
                             GameObject.Destroy(obj);
                             cleaned++;
                         }
@@ -562,8 +516,6 @@ namespace SyntheticSoulMod
 
                 if (cleaned > 0)
                     DesktopLogger.Log($"[Cleanup] ✓ Removed {cleaned} duplicate(s)");
-                else
-                    DesktopLogger.Log("[Cleanup] ✓ No duplicates found");
             }
             catch (Exception e)
             {
@@ -580,13 +532,11 @@ namespace SyntheticSoulMod
             {
                 GameObject temp = new GameObject("TempDDOL");
                 GameObject.DontDestroyOnLoad(temp);
-                UnityEngine.SceneManagement.Scene dontDestroyOnLoadScene = temp.scene;
+                Scene dontDestroyOnLoadScene = temp.scene;
                 GameObject.Destroy(temp);
 
                 if (dontDestroyOnLoadScene.IsValid())
-                {
                     allObjects.AddRange(dontDestroyOnLoadScene.GetRootGameObjects());
-                }
             }
             catch { }
 
@@ -597,37 +547,23 @@ namespace SyntheticSoulMod
         {
             try
             {
-                string[] deathObjectNames = new string[]
-                {
-                    "Hero Death",
-                    "Hero_Death_Anim",
-                    "Hero Death Anim",
-                    "Knight Death",
-                    "death_respawn_marker",
-                    "Corpse"
+                string[] deathObjectNames = {
+                    "Hero Death", "Hero_Death_Anim", "Hero Death Anim",
+                    "Knight Death", "death_respawn_marker", "Corpse"
                 };
 
-                int cleaned = 0;
                 GameObject[] allObjects = GameObject.FindObjectsOfType<GameObject>();
-
                 foreach (var obj in allObjects)
                 {
                     if (obj == null) continue;
-
                     foreach (var deathName in deathObjectNames)
                     {
                         if (obj.name.Contains(deathName))
                         {
                             GameObject.Destroy(obj);
-                            cleaned++;
                             break;
                         }
                     }
-                }
-
-                if (cleaned > 0)
-                {
-                    DesktopLogger.Log($"[Cleanup] ✓ Removed {cleaned} death object(s)");
                 }
             }
             catch (Exception e)
@@ -636,6 +572,9 @@ namespace SyntheticSoulMod
             }
         }
 
+        // ════════════════════════════════════════════════════════
+        // DEATH, VICTORY, RELOAD
+        // ════════════════════════════════════════════════════════
         private IEnumerator OnHeroDeath(On.HeroController.orig_Die orig, HeroController self)
         {
             if (ignoreDamageUntilReady || isReloading)
@@ -647,7 +586,8 @@ namespace SyntheticSoulMod
             if (isTraining && !episodeEnded && isInBossArena)
             {
                 episodeEnded = true;
-                DesktopLogger.Log("[Death] Hero died - initiating reload");
+                victoryTracker?.OnDefeat();
+                DesktopLogger.Log("[Death] Hero died — initiating reload");
                 yield return new WaitForSeconds(0.5f);
                 yield return GameManager.instance.StartCoroutine(HandleCleanReload(isDeath: true));
             }
@@ -657,61 +597,138 @@ namespace SyntheticSoulMod
             }
         }
 
+        /// <summary>
+        /// MODIFICATO v10: Usa VictoryTracker per gestire la sequenza di vittoria.
+        /// </summary>
+        private void OnHealthManagerDie(On.HealthManager.orig_Die orig, HealthManager self,
+            float? attackDirection, AttackTypes attackType, bool ignoreEvasion)
+        {
+            orig(self, attackDirection, attackType, ignoreEvasion);
+
+            if (isTraining && !episodeEnded && isInBossArena && !isReloading && IsBossEnemy(self.gameObject))
+            {
+                if (currentScene == "GG_Mantis_Lords")
+                {
+                    int mantisId = self.gameObject.GetInstanceID();
+                    if (killedMantisIds.Contains(mantisId)) return;
+
+                    killedMantisIds.Add(mantisId);
+                    mantisLordsKilled++;
+                    DesktopLogger.Log($"[Victory] Mantis Lord defeated ({mantisLordsKilled}/3)");
+
+                    if (mantisLordsKilled >= 3)
+                    {
+                        episodeEnded = true;
+
+                        // Invia stato vittoria a Python immediatamente
+                        SendVictoryState();
+
+                        // ═══ VICTORY TRACKER: Gestisci sequenza vittoria ═══
+                        if (victoryTracker != null)
+                        {
+                            victoryTracker.OnMantisKilled(mantisLordsKilled);
+                            GameManager.instance.StartCoroutine(HandleVictorySequence());
+                        }
+                        else
+                        {
+                            // Fallback senza tracker
+                            GameManager.instance.StartCoroutine(HandleCleanReload(isDeath: false));
+                        }
+                    }
+                }
+                else
+                {
+                    episodeEnded = true;
+                    DesktopLogger.Log("[Victory] Boss defeated");
+                    GameManager.instance.StartCoroutine(HandleCleanReload(isDeath: false));
+                }
+            }
+        }
+
+        /// <summary>
+        /// FIX: Nuova coroutine per gestire vittoria -> attesa -> reload
+        /// </summary>
+        private IEnumerator HandleVictorySequence()
+        {
+            DesktopLogger.Log("[Victory] Starting victory sequence...");
+
+            // Aspetta che VictoryTracker confermi la vittoria
+            yield return victoryTracker.WaitForVictoryConfirmation();
+
+            DesktopLogger.Log("[Victory] Starting scene reload...");
+
+            // Ora fai il reload
+            yield return HandleCleanReload(isDeath: false);
+        }
+
+        private void SendVictoryState()
+        {
+            try
+            {
+                var gameState = stateExtractor?.ExtractState();
+                if (gameState == null) return;
+
+                gameState.mantisLordsKilled = mantisLordsKilled;
+                gameState.bossDefeated = true;
+                gameState.isDead = false;
+
+                if (victoryTracker != null)
+                {
+                    gameState.sessionWins = victoryTracker.TotalWins + 1;
+                    gameState.currentStreak = victoryTracker.CurrentStreak + 1;
+                    gameState.winRate = victoryTracker.WinRate;
+                }
+
+                lock (damageLock)
+                {
+                    gameState.damageTaken = damageTakenSinceLastUpdate;
+                    gameState.lastHazardType = lastHazardTypeDetected;
+                    damageTakenSinceLastUpdate = 0;
+                    lastHazardTypeDetected = 0;
+                }
+
+                communicator?.SendState(gameState);
+                DesktopLogger.Log("[Victory] Victory state sent to Python");
+            }
+            catch (Exception e)
+            {
+                DesktopLogger.LogError($"[Victory] SendVictoryState: {e.Message}");
+            }
+        }
+
         private IEnumerator HandleCleanReload(bool isDeath)
         {
             isReloading = true;
             ignoreDamageUntilReady = true;
 
-            var gameState = stateExtractor?.ExtractState();
-            if (gameState != null)
+            // Invia stato finale solo per death (per vittoria è già stato inviato)
+            if (isDeath)
             {
-                lock (damageLock)
+                var gameState = stateExtractor?.ExtractState();
+                if (gameState != null)
                 {
-                    gameState.damageTaken = damageTakenSinceLastUpdate;
-
-                    // --- AGGIUNTA NUOVA ---
-                    gameState.lastHazardType = lastHazardTypeDetected;
-                    // ---------------------
-
-                    damageTakenSinceLastUpdate = 0;
-
-                    // --- AGGIUNTA NUOVA ---
-                    lastHazardTypeDetected = 0;
-                    // ---------------------
+                    lock (damageLock)
+                    {
+                        gameState.damageTaken = damageTakenSinceLastUpdate;
+                        gameState.lastHazardType = lastHazardTypeDetected;
+                        damageTakenSinceLastUpdate = 0;
+                        lastHazardTypeDetected = 0;
+                    }
+                    gameState.isDead = true;
+                    gameState.bossDefeated = false;
+                    communicator?.SendState(gameState);
                 }
-
-                gameState.isDead = isDeath;
-                gameState.bossDefeated = !isDeath;
-                communicator?.SendState(gameState);
             }
 
             yield return new WaitForSeconds(0.2f);
             DesktopLogger.Log("[Reload] ═══ RELOADING SCENE ═══");
 
             if (trainingSpeedActive && communicator != null && communicator.IsConnected)
-            {
                 SetTrainingSpeed(true);
-                DesktopLogger.Log($"[Reload] TimeScale maintained at {TRAINING_TIMESCALE}x");
-            }
             else
-            {
                 SetTrainingSpeed(false);
-            }
 
-            string currentSceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
-            string sceneToLoad = currentSceneName;
-
-            if (currentSceneName.StartsWith("GG_") &&
-                currentSceneName != "GG_Workshop" &&
-                currentSceneName != "GG_Atrium" &&
-                currentSceneName != "GG_Waterways")
-            {
-                DesktopLogger.Log($"[Reload] Reloading current Godhome arena: {sceneToLoad}");
-            }
-            else
-            {
-                DesktopLogger.Log($"[Reload] Reloading: {sceneToLoad}");
-            }
+            string sceneToLoad = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
 
             var pd = PlayerData.instance;
             if (pd != null)
@@ -724,130 +741,46 @@ namespace SyntheticSoulMod
             UnityEngine.SceneManagement.SceneManager.LoadScene(sceneToLoad);
         }
 
-        private void OnHealthManagerDie(On.HealthManager.orig_Die orig, HealthManager self,
-            float? attackDirection, AttackTypes attackType, bool ignoreEvasion)
-        {
-            orig(self, attackDirection, attackType, ignoreEvasion);
-
-            if (isTraining && !episodeEnded && isInBossArena && !isReloading && IsBossEnemy(self.gameObject))
-            {
-                if (currentScene == "GG_Mantis_Lords")
-                {
-                    int mantisId = self.gameObject.GetInstanceID();
-
-                    if (killedMantisIds.Contains(mantisId))
-                        return;
-
-                    killedMantisIds.Add(mantisId);
-                    mantisLordsKilled++;
-                    DesktopLogger.Log($"[Victory] Mantis Lord defeated ({mantisLordsKilled}/3)");
-
-                    if (mantisLordsKilled >= 3)
-                    {
-                        DesktopLogger.Log("[Victory] All Mantis Lords defeated - initiating reload");
-                        episodeEnded = true;
-                        GameManager.instance.StartCoroutine(HandleCleanReload(isDeath: false));
-                    }
-                }
-                else
-                {
-                    episodeEnded = true;
-                    DesktopLogger.Log("[Victory] Boss defeated");
-                    GameManager.instance.StartCoroutine(HandleCleanReload(isDeath: false));
-                }
-            }
-        }
-
-        // ============ MODIFICA CRITICA: OnTakeDamage con hazardType ============
+        // ════════════════════════════════════════════════════════
+        // DAMAGE TRACKING
+        // ════════════════════════════════════════════════════════
         private int OnTakeDamage(int hazardType, int damage)
         {
             if (ignoreDamageUntilReady || isReloading)
-            {
                 return 0;
-            }
 
             lock (damageLock)
             {
                 damageTakenSinceLastUpdate += damage;
-
-                // --- AGGIUNTA NUOVA ---
-                // Salviamo il tipo di pericolo comunicato dal gioco
-                // 1 = Normal/Enemy, 2 = Spikes/Acid/Environmental
                 lastHazardTypeDetected = hazardType;
-                // ---------------------
             }
 
             return damage;
         }
 
-        private bool IsBossScene(string sceneName)
-        {
-            string name = sceneName.ToLower();
-
-            if (name.StartsWith("gg_") &&
-                name != "gg_workshop" &&
-                name != "gg_atrium" &&
-                name != "gg_waterways")
-            {
-                return true;
-            }
-
-            return name.Contains("fungus2_15") || name.Contains("fungus1_04") ||
-                   name.Contains("deepnest_east") || name.Contains("fungus3_23") ||
-                   name.Contains("ruins1_24") || name.Contains("mines_18") ||
-                   name.Contains("crossroads_09");
-        }
-
-        private bool IsBossEnemy(GameObject enemy)
-        {
-            if (enemy == null) return false;
-
-            string name = enemy.name.ToLower();
-            bool isBossByName = name.Contains("hornet") || name.Contains("mantis") ||
-                name.Contains("false knight") || name.Contains("mawlek") ||
-                name.Contains("soul master") || name.Contains("broken vessel") ||
-                name.Contains("dung defender") || name.Contains("traitor lord") ||
-                name.Contains("collector") || name.Contains("god tamer") ||
-                name.Contains("hive knight") || name.Contains("ghost warrior") ||
-                name.Contains("crystal guardian") || name.Contains("white defender") ||
-                name.Contains("lost kin") || name.Contains("grey prince") ||
-                name.Contains("nosk") || name.Contains("flukemarm") ||
-                name.Contains("massive moss charger") || name.Contains("gruz mother") ||
-                name.Contains("vengefly king") || name.Contains("nightmare king") ||
-                name.Contains("radiance") || name.Contains("boss") || name.Contains("gruz");
-
-            if (isBossByName) return true;
-
-            var hm = enemy.GetComponent<HealthManager>();
-            return hm != null && hm.hp > 50;
-        }
-
+        // ════════════════════════════════════════════════════════
+        // HERO UPDATE (main loop)
+        // ════════════════════════════════════════════════════════
         private void OnHeroUpdate()
         {
             if (hero == null)
                 hero = HeroController.instance;
 
-            if (!isTraining)
-                return;
+            if (!isTraining) return;
 
             bool currentlyConnected = communicator.IsConnected;
-
             if (currentlyConnected != wasConnected)
             {
                 if (currentlyConnected)
                 {
                     Log("[SyntheticSoul] ✓ Python agent connected!");
-                    DesktopLogger.Log($"=== PYTHON AGENT CONNECTED ===");
-
-                    if (actionExecutor != null)
-                        actionExecutor.DestroyDevice();
-
+                    DesktopLogger.Log("=== PYTHON AGENT CONNECTED ===");
+                    if (actionExecutor != null) actionExecutor.DestroyDevice();
                     actionExecutor = new ActionExecutor();
 
                     if (!autoSpawnTriggered && currentScene != "GG_Mantis_Lords")
                     {
                         autoSpawnTriggered = true;
-                        DesktopLogger.Log("[AutoSpawn] Teleporting to GG_Mantis_Lords arena...");
                         GameManager.instance.StartCoroutine(AutoSpawnToMantisArena());
                     }
 
@@ -856,23 +789,16 @@ namespace SyntheticSoulMod
                 else
                 {
                     Log("[SyntheticSoul] ✗ Python agent disconnected");
-
-                    if (actionExecutor != null)
-                    {
-                        actionExecutor.DestroyDevice();
-                    }
-
+                    if (actionExecutor != null) actionExecutor.DestroyDevice();
                     SetTrainingSpeed(false);
                 }
 
                 wasConnected = currentlyConnected;
             }
 
-            if (!currentlyConnected)
-                return;
+            if (!currentlyConnected) return;
 
-            if (actionExecutor != null)
-                actionExecutor.Update();
+            if (actionExecutor != null) actionExecutor.Update();
 
             lastTimeScaleCheck += Time.unscaledDeltaTime;
             if (lastTimeScaleCheck >= TIMESCALE_CHECK_INTERVAL)
@@ -889,8 +815,10 @@ namespace SyntheticSoulMod
             }
         }
 
-        // ============ MODIFICA CRITICA: ProcessAIStep con lastHazardType ============
-       private void ProcessAIStep()
+        // ════════════════════════════════════════════════════════
+        // AI STEP (invia stato, ricevi azione)
+        // ════════════════════════════════════════════════════════
+        private void ProcessAIStep()
         {
             try
             {
@@ -908,44 +836,40 @@ namespace SyntheticSoulMod
 
                 var gameState = stateExtractor.ExtractState();
 
-                // ============ FIX KILL TRACKING v2 ============
-                // Problema: A volte l'evento Die non scatta, ma l'Extractor vede HP <= 0.
-                // Soluzione: Prendiamo il valore massimo tra i due sistemi.
-
-                // 1. Se l'Extractor vede più morti di noi (es. evento perso), ci aggiorniamo
+                // Kill tracking sync
                 if (gameState.mantisLordsKilled > this.mantisLordsKilled)
                 {
                     this.mantisLordsKilled = gameState.mantisLordsKilled;
-                    DesktopLogger.Log($"[Sync] Mantis Count corrected by Extractor: {this.mantisLordsKilled}");
+                    DesktopLogger.Log($"[Sync] Mantis Count corrected: {this.mantisLordsKilled}");
                 }
-
-                // 2. Se noi abbiamo registrato una morte ma l'oggetto è sparito (Extractor=0),
-                // imponiamo la nostra memoria persistente.
                 gameState.mantisLordsKilled = this.mantisLordsKilled;
-                // ==============================================
+
+                // ═══ VICTORY TRACKER: Aggiungi metriche sessione ═══
+                if (victoryTracker != null)
+                {
+                    gameState.sessionWins = victoryTracker.TotalWins;
+                    gameState.currentStreak = victoryTracker.CurrentStreak;
+                    gameState.winRate = victoryTracker.WinRate;
+                }
 
                 lock (damageLock)
                 {
                     gameState.damageTaken = damageTakenSinceLastUpdate;
                     gameState.lastHazardType = lastHazardTypeDetected;
-
                     damageTakenSinceLastUpdate = 0;
                     lastHazardTypeDetected = 0;
                 }
 
                 communicator.SendState(gameState);
-
                 string action = communicator.ReceiveAction();
 
                 bool canExecute = hero != null &&
-                    !hero.cState.dead &&
-                    !hero.cState.recoiling &&
-                    hero.acceptingInput;
+                                  !hero.cState.dead &&
+                                  !hero.cState.recoiling &&
+                                  hero.acceptingInput;
 
                 if (!string.IsNullOrEmpty(action) && action != "IDLE" && canExecute)
-                {
                     actionExecutor.ExecuteAction(action, force: false);
-                }
             }
             catch (Exception e)
             {
@@ -953,6 +877,48 @@ namespace SyntheticSoulMod
             }
         }
 
+        // ════════════════════════════════════════════════════════
+        // HELPERS
+        // ════════════════════════════════════════════════════════
+        private bool IsBossScene(string sceneName)
+        {
+            string name = sceneName.ToLower();
+            if (name.StartsWith("gg_") && name != "gg_workshop" && name != "gg_atrium" && name != "gg_waterways")
+                return true;
+
+            return name.Contains("fungus2_15") || name.Contains("fungus1_04") ||
+                   name.Contains("deepnest_east") || name.Contains("fungus3_23") ||
+                   name.Contains("ruins1_24") || name.Contains("mines_18") ||
+                   name.Contains("crossroads_09");
+        }
+
+        private bool IsBossEnemy(GameObject enemy)
+        {
+            if (enemy == null) return false;
+
+            string name = enemy.name.ToLower();
+            bool isBossByName = name.Contains("hornet") || name.Contains("mantis") ||
+                               name.Contains("false knight") || name.Contains("mawlek") ||
+                               name.Contains("soul master") || name.Contains("broken vessel") ||
+                               name.Contains("dung defender") || name.Contains("traitor lord") ||
+                               name.Contains("collector") || name.Contains("god tamer") ||
+                               name.Contains("hive knight") || name.Contains("ghost warrior") ||
+                               name.Contains("crystal guardian") || name.Contains("white defender") ||
+                               name.Contains("lost kin") || name.Contains("grey prince") ||
+                               name.Contains("nosk") || name.Contains("flukemarm") ||
+                               name.Contains("massive moss charger") || name.Contains("gruz mother") ||
+                               name.Contains("vengefly king") || name.Contains("nightmare king") ||
+                               name.Contains("radiance") || name.Contains("boss") || name.Contains("gruz");
+
+            if (isBossByName) return true;
+
+            var hm = enemy.GetComponent<HealthManager>();
+            return hm != null && hm.hp > 50;
+        }
+
+        // ════════════════════════════════════════════════════════
+        // UNLOAD
+        // ════════════════════════════════════════════════════════
         public void Unload()
         {
             if (actionExecutor != null)
@@ -967,9 +933,7 @@ namespace SyntheticSoulMod
             On.HeroController.Die -= OnHeroDeath;
             UnityEngine.SceneManagement.SceneManager.activeSceneChanged -= OnSceneChanged;
 
-            if (communicator != null)
-                communicator.Close();
-
+            if (communicator != null) communicator.Close();
             isTraining = false;
         }
     }
