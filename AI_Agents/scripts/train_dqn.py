@@ -219,7 +219,7 @@ PHASE_CONFIGS = {
     1: {
         "name": "SURVIVAL",
         "description": "Learn to dodge and not die",
-        "episodes": 400,
+        "episodes": 1000,
         "lr": 1e-4,
         "epsilon_start": 0.60, "epsilon_end": 0.10, "epsilon_decay": 30000,
         "hidden_sizes": [128, 256, 128],
@@ -227,13 +227,13 @@ PHASE_CONFIGS = {
         "target_update_tau": 0.005,
         "gamma": 0.99,
         "use_pattern_bonus": True, "preprocess_version": 2,
-        "promotion_condition": "avg_survival_steps >= 700",
-        "promotion_avg_window": 20,
+        "promotion_condition": "avg_survival_steps >= 850",
+        "promotion_avg_window": 25,
     },
     2: {
         "name": "FIRST HITS",
         "description": "Learn to punish during recovery windows",
-        "episodes": 600,
+        "episodes": 1000,
         "lr": 5e-5,
         "epsilon_start": 0.40, "epsilon_end": 0.08, "epsilon_decay": 25000,
         "hidden_sizes": [128, 256, 128],
@@ -241,13 +241,13 @@ PHASE_CONFIGS = {
         "target_update_tau": 0.005,
         "gamma": 0.995,
         "use_pattern_bonus": True, "preprocess_version": 2,
-        "promotion_condition": "avg_damage_dealt >= 200",
+        "promotion_condition": "avg_damage_dealt >= 250",
         "promotion_avg_window": 25,
     },
     3: {
         "name": "AGGRESSION",
         "description": "Kill the first mantis",
-        "episodes": 600,
+        "episodes": 1200,
         "lr": 3e-5,
         "epsilon_start": 0.30, "epsilon_end": 0.05, "epsilon_decay": 40000,
         "hidden_sizes": [128, 256, 128],
@@ -255,13 +255,13 @@ PHASE_CONFIGS = {
         "target_update_tau": 0.005,
         "gamma": 0.995,
         "use_pattern_bonus": True, "preprocess_version": 2,
-        "promotion_condition": "avg_mantis_killed >= 0.5",
+        "promotion_condition": "avg_mantis_killed >= 0.8",
         "promotion_avg_window": 30,
     },
     4: {
         "name": "DUAL MANTIS",
         "description": "Handle two mantises at once",
-        "episodes": 700,
+        "episodes": 2000,
         "lr": 2e-5,
         "epsilon_start": 0.25, "epsilon_end": 0.05, "epsilon_decay": 40000,
         "hidden_sizes": [128, 256, 128],
@@ -269,13 +269,13 @@ PHASE_CONFIGS = {
         "target_update_tau": 0.005,
         "gamma": 0.995,
         "use_pattern_bonus": True, "preprocess_version": 2,
-        "promotion_condition": "avg_mantis_killed >= 2.0",
-        "promotion_avg_window": 30,
+        "promotion_condition": "avg_mantis_killed >= 1.8",
+        "promotion_avg_window": 40,
     },
     5: {
         "name": "MASTERY",
         "description": "Full victory, optimize time and no-hit",
-        "episodes": 1000,
+        "episodes": 1500,
         "lr": 1e-5,
         "epsilon_start": 0.15, "epsilon_end": 0.03, "epsilon_decay": 50000,
         "hidden_sizes": [128, 256, 128],
@@ -585,6 +585,7 @@ def run_all_phases(
 
     os.makedirs(base_dir, exist_ok=True)
     current_model = pretrained_path
+    n_instances = len(ports)
 
     for phase in range(start_phase, end_phase + 1):
         if phase not in PHASE_CONFIGS:
@@ -600,13 +601,231 @@ def run_all_phases(
         else:
             print(f"\n[DQN Pipeline] Phase {phase} produced no model. Stop.")
             break
+
+        # Eleggi il champion per questa fase
+        select_champion(base_dir, phase=phase, n_instances=n_instances)
+
         print(f"\n{'-'*70}\n  Pausing 5s before next phase...\n{'-'*70}\n")
         time.sleep(5)
+
+    # Raccogli tutti i champion
+    collect_all_champions(base_dir, n_instances=n_instances)
 
     print(f"\n{'='*70}")
     print(f"  DQN TRAINING PIPELINE COMPLETE")
     print(f"  Final model: {current_model}")
     print(f"{'='*70}\n")
+
+
+# ═══════════════════════════════════════════════════════════════
+# CHAMPION SYSTEM — Seleziona il miglior modello per ogni fase
+# ═══════════════════════════════════════════════════════════════
+
+def select_champion(checkpoint_dir: str, phase: int = 5, n_instances: int = 3) -> Optional[str]:
+    """
+    Trova il miglior modello tra tutte le istanze di una fase.
+    Confronta con il champion precedente se esiste.
+    """
+    import shutil
+
+    phase_dir = os.path.join(checkpoint_dir, f"phase_{phase}")
+    champion_dir = os.path.join(checkpoint_dir, "champion")
+    os.makedirs(champion_dir, exist_ok=True)
+
+    phase_name = PHASE_CONFIGS.get(phase, {}).get("name", f"PHASE_{phase}")
+    champion_model = os.path.join(champion_dir, f"phase_{phase}_champion.pth")
+    champion_meta = os.path.join(champion_dir, f"phase_{phase}_champion.json")
+    history_file = os.path.join(champion_dir, f"phase_{phase}_history.json")
+
+    candidates = []
+
+    state_file = os.path.join(phase_dir, "shared_state.json")
+    if os.path.exists(state_file):
+        try:
+            with open(state_file, 'r') as f:
+                state = json.load(f)
+            for entry in state.get("best_models", []):
+                path = entry.get("path", "")
+                reward = entry.get("reward", -float("inf"))
+                inst_id = entry.get("instance_id", -1)
+                if os.path.exists(path):
+                    candidates.append({
+                        "path": path, "reward": reward,
+                        "instance_id": inst_id, "source": "hall_of_fame",
+                    })
+        except Exception:
+            pass
+
+    for i in range(n_instances):
+        best_path = os.path.join(phase_dir, f"instance_{i}", "best.pth")
+        if os.path.exists(best_path):
+            already = any(c["instance_id"] == i for c in candidates)
+            if not already:
+                candidates.append({
+                    "path": best_path, "reward": -1.0,
+                    "instance_id": i, "source": "instance_best",
+                })
+
+    if not candidates:
+        print(f"\n  [Champion] Nessun modello trovato in {phase_dir}")
+        return None
+
+    candidates.sort(key=lambda c: c["reward"], reverse=True)
+    new_champion = candidates[0]
+
+    print(f"\n{'='*60}")
+    print(f"  CHAMPION SELECTION — Phase {phase}: {phase_name}")
+    print(f"{'='*60}")
+    print(f"  Candidati trovati: {len(candidates)}")
+    for i, c in enumerate(candidates):
+        marker = " << BEST" if i == 0 else ""
+        print(f"    Inst {c['instance_id']}: R={c['reward']:.2f} ({c['source']}){marker}")
+
+    old_champion = None
+    if os.path.exists(champion_meta):
+        try:
+            with open(champion_meta, 'r') as f:
+                old_champion = json.load(f)
+            print(f"\n  Champion precedente: R={old_champion.get('reward', '?'):.2f} "
+                  f"(Inst {old_champion.get('instance_id', '?')}, "
+                  f"run {old_champion.get('run_id', '?')})")
+        except Exception:
+            old_champion = None
+
+    run_id = 1
+    if os.path.exists(history_file):
+        try:
+            with open(history_file, 'r') as f:
+                run_id = len(json.load(f)) + 1
+        except Exception:
+            pass
+
+    save_new = False
+    if old_champion is None:
+        save_new = True
+        print(f"\n  Nessun champion precedente -> il nuovo diventa champion")
+    elif new_champion["reward"] > old_champion.get("reward", -float("inf")):
+        save_new = True
+        improvement = new_champion["reward"] - old_champion.get("reward", 0)
+        print(f"\n  * NUOVO CHAMPION! R={new_champion['reward']:.2f} > "
+              f"R={old_champion.get('reward', 0):.2f} (+{improvement:.2f})")
+    else:
+        print(f"\n  Champion precedente confermato (R={old_champion.get('reward', 0):.2f} >= "
+              f"R={new_champion['reward']:.2f})")
+
+    if save_new:
+        try:
+            shutil.copy2(new_champion["path"], champion_model)
+        except Exception as e:
+            print(f"  [Champion] Errore copia: {e}")
+            return None
+
+        meta = {
+            "reward": new_champion["reward"],
+            "instance_id": new_champion["instance_id"],
+            "source": new_champion["source"],
+            "source_path": new_champion["path"],
+            "run_id": run_id,
+            "timestamp": datetime.now().isoformat(),
+            "phase": phase, "phase_name": phase_name,
+        }
+        with open(champion_meta, 'w') as f:
+            json.dump(meta, f, indent=2)
+
+    history = []
+    if os.path.exists(history_file):
+        try:
+            with open(history_file, 'r') as f:
+                history = json.load(f)
+        except Exception:
+            pass
+    history.append({
+        "run_id": run_id, "reward": new_champion["reward"],
+        "instance_id": new_champion["instance_id"],
+        "is_new_champion": save_new,
+        "timestamp": datetime.now().isoformat(),
+    })
+    with open(history_file, 'w') as f:
+        json.dump(history, f, indent=2)
+
+    print(f"\n  Champion Phase {phase}: {champion_model}")
+    if len(history) > 1:
+        print(f"\n  History ({len(history)} run):")
+        for h in history:
+            marker = " * CHAMPION" if h["is_new_champion"] else ""
+            print(f"    Run {h['run_id']}: R={h['reward']:.2f} (Inst {h['instance_id']}){marker}")
+    print(f"{'='*60}\n")
+    return champion_model
+
+
+def collect_all_champions(checkpoint_dir: str, n_instances: int = 3):
+    """
+    Raccoglie i champion di tutte le fasi in un'unica cartella.
+    Crea retroattivamente i champion per le fasi già completate.
+    """
+    existing_phases = []
+    for phase in range(1, 6):
+        phase_dir = os.path.join(checkpoint_dir, f"phase_{phase}")
+        if os.path.exists(phase_dir):
+            existing_phases.append(phase)
+
+    if not existing_phases:
+        return
+
+    champion_dir = os.path.join(checkpoint_dir, "champion")
+    os.makedirs(champion_dir, exist_ok=True)
+
+    print(f"\n{'='*60}")
+    print(f"  RACCOLTA CHAMPION — Tutte le fasi")
+    print(f"{'='*60}")
+
+    found = []
+    for phase in existing_phases:
+        phase_dir = os.path.join(checkpoint_dir, f"phase_{phase}")
+        champion_file = os.path.join(champion_dir, f"phase_{phase}_champion.pth")
+        champion_meta = os.path.join(champion_dir, f"phase_{phase}_champion.json")
+
+        if not os.path.exists(champion_file):
+            select_champion(checkpoint_dir, phase=phase, n_instances=n_instances)
+
+        if os.path.exists(champion_meta):
+            try:
+                with open(champion_meta, 'r') as f:
+                    found.append(json.load(f))
+            except Exception:
+                found.append({"phase": phase, "reward": "?", "phase_name": "?"})
+        elif os.path.exists(champion_file):
+            found.append({"phase": phase, "reward": "?", "phase_name": "?"})
+
+    if not found:
+        print(f"\n  Nessun champion trovato.")
+        return
+
+    print(f"\n  Champion disponibili:")
+    print(f"  {'-'*56}")
+    for meta in found:
+        phase = meta.get("phase", "?")
+        name = meta.get("phase_name", PHASE_CONFIGS.get(phase, {}).get("name", "?"))
+        reward = meta.get("reward", "?")
+        inst = meta.get("instance_id", "?")
+        runs = meta.get("run_id", "?")
+        reward_str = f"R={reward:.2f}" if isinstance(reward, (int, float)) else f"R={reward}"
+        champ_path = os.path.join(champion_dir, f"phase_{phase}_champion.pth")
+        print(f"    Phase {phase} ({name:>12}): {reward_str} | Inst {inst} | run {runs}")
+        print(f"      -> python play_dqn.py --model {champ_path}")
+
+    global_champ = None
+    for phase in [5, 4, 3, 2, 1]:
+        candidate = os.path.join(champion_dir, f"phase_{phase}_champion.pth")
+        if os.path.exists(candidate):
+            global_champ = candidate
+            break
+
+    if global_champ:
+        print(f"\n  {'-'*56}")
+        print(f"  Miglior modello complessivo:")
+        print(f"    python play_dqn.py --model {global_champ}")
+    print(f"{'='*60}\n")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -652,6 +871,12 @@ Examples:
 
     print(f"\n  Agent: DQN | Instances: {args.instances} | Ports: {ports}")
 
+    # ═══ Raccogli i champion da tutte le fasi già esistenti ═══
+    collect_all_champions(
+        checkpoint_dir=args.output,
+        n_instances=args.instances,
+    )
+
     if args.phase:
         run_phase_multi_instance(
             phase=args.phase, ports=ports,
@@ -659,6 +884,19 @@ Examples:
             pretrained_path=args.pretrained,
             auto_promote=not args.no_auto_promote,
             sync_interval=args.sync_interval)
+
+        # Eleggi il champion per la fase completata
+        select_champion(
+            checkpoint_dir=args.output,
+            phase=args.phase,
+            n_instances=args.instances,
+        )
+
+        # Riepilogo completo
+        collect_all_champions(
+            checkpoint_dir=args.output,
+            n_instances=args.instances,
+        )
     else:
         run_all_phases(
             ports=ports, base_dir=args.output,

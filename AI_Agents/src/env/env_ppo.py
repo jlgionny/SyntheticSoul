@@ -140,20 +140,9 @@ class HollowKnightEnvPPO:
 
     # ═══════════════════════════════════════════════════════════════
     # REWARD FUNCTIONS — PPO VARIANT (DENSE SHAPING)
-    #
-    # KEY DIFFERENCES FROM DQN:
-    #   1. Every step yields non-zero reward (survival tick, position)
-    #   2. Distance-to-boss tracking: reward approaching during safe
-    #      windows, reward retreating during attacks
-    #   3. Dodge streaks: small cumulative bonus for consecutive
-    #      no-damage steps during active boss attacks
-    #   4. Smoothed terminal bonuses: kill/death rewards are lower
-    #      magnitude since dense signal already captures progress
-    #   5. Movement quality: penalize idle, reward purposeful motion
     # ═══════════════════════════════════════════════════════════════
 
     def _compute_reward(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
-        """Dispatch to phase-specific reward function."""
         if self.phase == 1:
             return self._reward_phase1_survive(state, done)
         elif self.phase == 2:
@@ -170,32 +159,21 @@ class HollowKnightEnvPPO:
     # ─── Shared dense shaping utilities (PPO-only) ───
 
     def _distance_shaping(self, state: Dict, safe_to_approach: bool) -> float:
-        """
-        PPO-SPECIFIC: Continuous reward for spatial awareness.
-        Reward approaching boss during safe windows (recovery),
-        reward retreating during dangerous windows (wind-up/attack).
-        """
         dist = state.get("distanceToBoss", 50.0)
         reward = 0.0
 
         if self.prev_distance_to_boss is not None:
-            delta_dist = self.prev_distance_to_boss - dist  # positive = approaching
+            delta_dist = self.prev_distance_to_boss - dist
 
             if safe_to_approach:
-                # Reward approaching during punish windows
                 reward += np.clip(delta_dist * 0.02, -0.05, 0.05)
             else:
-                # Reward maintaining/increasing distance during danger
                 reward += np.clip(-delta_dist * 0.015, -0.03, 0.05)
 
         self.prev_distance_to_boss = dist
         return reward
 
     def _movement_quality(self, state: Dict) -> float:
-        """
-        PPO-SPECIFIC: Small reward for purposeful movement, penalize
-        standing still. Prevents PPO from converging on idle policies.
-        """
         player_x = state.get("playerPositionX", 0.0)
         reward = 0.0
 
@@ -204,26 +182,21 @@ class HollowKnightEnvPPO:
             if movement < 0.01:
                 self.consecutive_idle_steps += 1
                 if self.consecutive_idle_steps > 30:
-                    reward -= 0.005  # Gentle idle penalty after ~0.5s
+                    reward -= 0.005
             else:
                 self.consecutive_idle_steps = 0
-                reward += 0.002  # Tiny movement reward
+                reward += 0.002
 
         self.prev_player_x = player_x
         return reward
 
     def _dodge_streak_bonus(self, damage_taken: int, boss_attacking: bool) -> float:
-        """
-        PPO-SPECIFIC: Cumulative bonus for consecutive dodges.
-        Grows slightly over time to reward sustained awareness.
-        """
         if damage_taken > 0:
             self.steps_without_damage = 0
             return 0.0
 
         if boss_attacking:
             self.steps_without_damage += 1
-            # Logarithmic growth: diminishing returns but never zero
             if self.steps_without_damage > 5:
                 return 0.01 * min(np.log(self.steps_without_damage), 3.0)
         return 0.0
@@ -231,56 +204,36 @@ class HollowKnightEnvPPO:
     # ─── Phase-specific reward functions ───
 
     def _reward_phase1_survive(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
-        """
-        PHASE 1: SURVIVAL (PPO Dense)
-        Dense: continuous survival tick + distance shaping + dodge streaks
-        """
         reward = 0.0
         info = {}
-
         damage_taken = state.get("damageTaken", 0)
         is_dead = state.get("isDead", False)
         hazard_type = state.get("lastHazardType", 0)
         boss_attacking = state.get("primaryMantisActive", False)
         boss_windup = state.get("primaryMantisWindUp", False)
 
-        # ═══ PPO DENSE: Continuous survival tick ═══
-        # Higher than DQN's sparse version; PPO needs per-step signal
         reward += 0.02
-
-        # ═══ PPO DENSE: Distance shaping ═══
-        # In survival phase, staying at medium distance is good
         safe = not boss_attacking and not boss_windup
         reward += self._distance_shaping(state, safe_to_approach=safe)
-
-        # ═══ PPO DENSE: Movement quality ═══
         reward += self._movement_quality(state)
-
-        # ═══ PPO DENSE: Dodge streak bonus ═══
         reward += self._dodge_streak_bonus(damage_taken, boss_attacking)
 
-        # Damage taken penalty (moderate — PPO learns from dense signal)
         if damage_taken > 0:
-            reward -= 3.0  # Lower than DQN's -4.0; dense signal compensates
-            if hazard_type == 2:  # Spikes
+            reward -= 3.0
+            if hazard_type == 2:
                 reward -= 3.0
                 info["damage_source"] = "SPIKES"
 
-        # Dodge success during active boss attack
         if boss_attacking and damage_taken == 0:
             reward += 0.15
             info["event"] = "DODGE_SUCCESS"
 
-        # Wind-up reaction bonus
-        if boss_windup and self.last_action in [4, 6]:  # JUMP or DASH
-            reward += 0.08  # Slightly higher than original for PPO signal
+        if boss_windup and self.last_action in [4, 6]:
+            reward += 0.08
 
-        # Death
         if done and is_dead:
-            reward -= 2.0  # Lower than DQN — dense signal already penalized
+            reward -= 2.0
 
-        # ═══ PPO DENSE: Survival milestones (smoother) ═══
-        # Every 100 steps instead of 200, smaller bonus (smoother gradient)
         if self.episode_steps > 0 and self.episode_steps % 100 == 0:
             reward += 0.3
             info["milestone"] = f"SURVIVED_{self.episode_steps}_STEPS"
@@ -288,210 +241,325 @@ class HollowKnightEnvPPO:
         return reward, info
 
     def _reward_phase2_first_hits(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
-        """
-        PHASE 2: FIRST HITS (PPO Dense)
-        Dense: approach during recovery + retreat during attack + damage dealt
-        """
         reward = 0.0
         info = {}
 
         boss_hp = state.get("bossHealth", 0.0)
-        damage_taken = state.get("damageTaken", 0)
+        current_player_hp = state.get("playerHealth", 9)  # <--- FIX: Leggiamo la vita attuale
         is_dead = state.get("isDead", False)
         hazard_type = state.get("lastHazardType", 0)
         boss_recovering = state.get("primaryMantisRecovering", False)
         boss_windup = state.get("primaryMantisWindUp", False)
         boss_attacking = state.get("primaryMantisActive", False)
 
-        # ═══ PPO DENSE: Per-step living reward ═══
-        reward += 0.01
+        # Calcolo HP persi per sostituire damage_taken cumulativo
+        hp_lost = 0
+        if hasattr(self, 'prev_player_hp') and self.prev_player_hp is not None:
+            hp_lost = max(0, self.prev_player_hp - current_player_hp)
 
-        # ═══ PPO DENSE: Distance shaping — approach during recovery ═══
+        reward += 0.01
         safe = boss_recovering or (not boss_attacking and not boss_windup)
         reward += self._distance_shaping(state, safe_to_approach=safe)
+        reward += self._dodge_streak_bonus(hp_lost, boss_attacking) # Usiamo hp_lost per azzerare la streak
 
-        # ═══ PPO DENSE: Dodge streaks ═══
-        reward += self._dodge_streak_bonus(damage_taken, boss_attacking)
-
-        # Damage dealt
+        # Danni inflitti
         if self.prev_boss_hp is not None:
             damage_dealt = self.prev_boss_hp - boss_hp
             if damage_dealt > 0 and damage_dealt < 500:
-                reward += damage_dealt * 0.12  # Slightly lower per-hit than DQN
+                reward += damage_dealt * 0.12
                 info["damage_dealt"] = damage_dealt
                 self.total_damage_dealt += damage_dealt
 
-                # Smart hit bonus: attacking during recovery
                 if boss_recovering:
                     reward += 0.25
                     info["smart_hit"] = True
 
-        # Damage taken
-        if damage_taken > 0:
-            reward -= 2.5  # Lower than DQN's -3.0; dense signal compensates
-            self.total_damage_taken += damage_taken
+        # FIX CRITICO: Malus per i danni subiti calcolato sul Delta HP
+        if hp_lost > 0:
+            reward -= (2.5 * hp_lost)
+            self.total_damage_taken += hp_lost
             if hazard_type == 2:
                 reward -= 2.5
 
-        # Penalize attacking during wind-up (bad trade)
+        # Penalizza chi attacca mentre il boss sta caricando un colpo (windup)
         if boss_windup and self.last_action == 5:
             reward -= 0.1
 
-        # ═══ PPO DENSE: Attack timing awareness ═══
-        # Small reward for attacking when close + boss recovering
         dist = state.get("distanceToBoss", 50.0)
         if self.last_action == 5 and boss_recovering and dist < 10.0:
-            reward += 0.1  # Reinforces punish-window aggression
+            reward += 0.1
             info["optimal_attack_position"] = True
 
         if done and is_dead:
             reward -= 2.0
 
+        # Aggiornamento stato
         self.prev_boss_hp = boss_hp
+        self.prev_player_hp = current_player_hp # <--- FIX: Salviamo la vita per il frame successivo
         return reward, info
 
     def _reward_phase3_aggression(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
-        """
-        PHASE 3: AGGRESSION (PPO Dense)
-        Dense: HP progress tracking + approach shaping + kill bonus (lower
-        magnitude since dense signal accumulates over the episode).
-        """
         reward = 0.0
         info = {}
 
         boss_hp = state.get("bossHealth", 0.0)
-        damage_taken = state.get("damageTaken", 0)
+        max_boss_hp = state.get("bossMaxHealth", 400.0)
+        if max_boss_hp <= 0: max_boss_hp = 400.0
+
+        current_player_hp = state.get("playerHealth", 9)
         is_dead = state.get("isDead", False)
         hazard_type = state.get("lastHazardType", 0)
         mantis_killed = state.get("mantisLordsKilled", 0)
         boss_recovering = state.get("primaryMantisRecovering", False)
         boss_attacking = state.get("primaryMantisActive", False)
+        boss_windup = state.get("primaryMantisWindUp", False) # MODIFICA: Telegraph detection
 
-        # ═══ PPO DENSE: Continuous tick ═══
-        reward += 0.005
-
-        # ═══ PPO DENSE: Distance shaping ═══
-        safe = boss_recovering or not boss_attacking
+        # 1. EVITARE IL CATASTROPHIC FORGETTING
+        safe = boss_recovering or (not boss_attacking and not boss_windup)
         reward += self._distance_shaping(state, safe_to_approach=safe)
+        reward += self._movement_quality(state)
 
-        # Damage dealt (per-hit reward)
+        # Gestione Danni Subiti
+        hp_lost = 0
+        if hasattr(self, 'prev_player_hp') and self.prev_player_hp is not None:
+            hp_lost = max(0, self.prev_player_hp - current_player_hp)
+            if hp_lost > 0:
+                reward -= (3.5 * hp_lost)
+                info["took_damage"] = True
+                if hazard_type == 2:
+                    reward -= 2.5
+
+        reward += self._dodge_streak_bonus(hp_lost, boss_attacking)
+
+        # 2. SEVERE ANTI-STALLING E TELEGRAPH AWARENESS
+        if self.steps_since_attack > 60:
+            reward -= 0.05  # MODIFICA: Penalità decuplicata per passività
+            info["stall_penalty"] = True
+
+        if self.consecutive_idle_steps > 30:
+            reward -= 0.02
+
+        # Penalizza l'agente se attacca durante il wind-up del boss (telegraph)
+        if boss_windup and self.last_action == 5:
+            reward -= 0.2
+            info["bad_attack_timing"] = True
+
+        # Premia se usa la finestra di wind-up per evadere
+        if boss_windup and self.last_action in [4, 6]:
+            reward += 0.1
+
+        # 3. DPS E AGGRESSIONE (EXECUTION BONUS)
         if self.prev_boss_hp is not None:
             damage_dealt = self.prev_boss_hp - boss_hp
             if damage_dealt > 0 and damage_dealt < 500:
-                reward += damage_dealt * 0.18
+
+                # MODIFICA: Il reward per i danni scala man mano che il boss perde vita
+                missing_hp_ratio = (max_boss_hp - boss_hp) / max_boss_hp
+                damage_reward = (damage_dealt * 0.18) * (1.0 + (0.5 * missing_hp_ratio))
+
+                reward += damage_reward
                 info["damage_dealt"] = damage_dealt
 
-            # ═══ PPO DENSE: HP threshold bonuses (smoothed) ═══
-            # Lower magnitude than DQN since PPO accumulates dense signal
+                if boss_recovering:
+                    reward += 0.35
+
             for threshold, bonus in [(200, 2.0), (100, 3.5), (50, 5.0)]:
                 if self.prev_boss_hp > threshold >= boss_hp:
                     reward += bonus
                     info[f"threshold_{threshold}"] = True
 
-        # ═══ PPO DENSE: HP progress tracking ═══
-        # Continuous small reward proportional to boss HP lost so far
-        # This gives PPO a gradient even between discrete damage events
         if boss_hp < (self.prev_boss_hp or 0):
-            hp_progress = 1.0 - (boss_hp / max(state.get("bossMaxHealth", 200.0), 1.0))
-            reward += hp_progress * 0.02  # Scales with fight progress
+            hp_progress = 1.0 - (boss_hp / max_boss_hp)
+            reward += hp_progress * 0.05
 
-        # Damage taken (reduced for aggression)
-        if damage_taken > 0:
-            reward -= 1.2
-            if hazard_type == 2:
-                reward -= 2.5
-
-        # Kill bonus — lower than DQN since dense signal accumulates
+        # 4. TERMINAL REWARDS
         if mantis_killed > self.prev_mantis_killed:
-            reward += 60.0  # DQN uses 100.0 — PPO doesn't need as large
+            reward += 60.0
             info["event"] = "MANTIS_KILLED"
 
         if done:
             if state.get("bossDefeated", False):
-                reward += 30.0  # DQN uses 50.0
+                reward += 30.0
                 info["outcome"] = "VICTORY"
             elif is_dead:
                 reward -= 3.0
 
+        # Update per frame successivo
         self.prev_boss_hp = boss_hp
         self.prev_mantis_killed = mantis_killed
+        self.prev_player_hp = current_player_hp
+
         return reward, info
 
     def _reward_phase4_dual_mantis(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
         """
-        PHASE 4: DUAL MANTIS (PPO Dense)
-        Dense: spatial awareness shaping + dual-dodge tracking
+        ═══════════════════════════════════════════════════════════════
+        FASE 4 v2 — DUAL MANTIS (Riscritta post-analisi plateau)
+
+        PROBLEMI RISOLTI:
+        ● L'agente si fermava a 1 kill perché il reward 1v1 vs 2v1
+          era sbilanciato: 60 punti per la prima kill dominavano tutto.
+        ● Penalità danno troppo alta nel 2v1 → l'agente imparava a
+          morire veloce piuttosto che sopravvivere.
+        ● Nessun incentivo a sopravvivere nel 2v1 (tick +0.005 era
+          identico al 1v1).
+        ● Usava damageTaken cumulativo invece del delta HP.
+        ● Mancava telegraph awareness (wind-up) per il 2v1.
+
+        MODIFICHE:
+        1. Tick sopravvivenza 5× nel 2v1 (+0.025 vs +0.005)
+        2. Kill reward ribilanciato: 1st kill = 35, 2nd kill = 85
+        3. Danno inflitto scala 1.5× dopo la prima kill
+        4. Penalità danno ridotta nel 2v1 (-3.0 vs -4.0)
+        5. Delta HP per danni subiti (come fasi 2/3)
+        6. Telegraph awareness + anti-stall
+        7. Threshold bonus per HP nel 2v1
+        8. Vittoria bonus aumentato a 50
+        ═══════════════════════════════════════════════════════════════
         """
         reward = 0.0
         info = {}
 
         boss_hp = state.get("bossHealth", 0.0)
-        damage_taken = state.get("damageTaken", 0)
+        max_boss_hp = state.get("bossMaxHealth", 700.0)
+        if max_boss_hp <= 0: max_boss_hp = 700.0
+
+        current_player_hp = state.get("playerHealth", 9)
         is_dead = state.get("isDead", False)
         hazard_type = state.get("lastHazardType", 0)
         mantis_killed = state.get("mantisLordsKilled", 0)
         active_count = state.get("activeMantisCount", 0)
         boss_attacking = state.get("primaryMantisActive", False)
         secondary_active = state.get("secondaryMantisActive", False)
+        boss_recovering = state.get("primaryMantisRecovering", False)
+        boss_windup = state.get("primaryMantisWindUp", False)
 
-        # ═══ PPO DENSE: Continuous tick ═══
-        reward += 0.005
+        # ─── 1. SOPRAVVIVENZA — molto più alta nel 2v1 ───
+        in_dual_phase = active_count >= 2 or mantis_killed >= 1
+        if in_dual_phase:
+            reward += 0.025  # 5× il tick base: sopravvivere al 2v1 è prezioso
+            info["dual_phase"] = True
+        else:
+            reward += 0.005
 
-        # ═══ PPO DENSE: Distance shaping ═══
-        safe = not boss_attacking and not secondary_active
+        # ─── 2. DISTANCE + MOVEMENT + DODGE ───
+        safe = boss_recovering or (not boss_attacking and not secondary_active)
         reward += self._distance_shaping(state, safe_to_approach=safe)
+        reward += self._movement_quality(state)
 
-        # ═══ PPO DENSE: Dodge streaks (extra important in phase 4) ═══
-        reward += self._dodge_streak_bonus(damage_taken, boss_attacking or secondary_active)
+        # Delta HP per danni subiti (fix dal vecchio damageTaken cumulativo)
+        hp_lost = 0
+        if self.prev_player_hp is not None:
+            hp_lost = max(0, self.prev_player_hp - current_player_hp)
 
-        # Damage dealt
+        reward += self._dodge_streak_bonus(hp_lost, boss_attacking or secondary_active)
+
+        # Dodge streak bonus amplificato nel 2v1
+        if in_dual_phase and hp_lost == 0 and (boss_attacking or secondary_active):
+            reward += 0.015  # Extra per schivare colpi nel 2v1
+
+        # ─── 3. DANNI INFLITTI — scala dopo la prima kill ───
         if self.prev_boss_hp is not None:
             damage_dealt = self.prev_boss_hp - boss_hp
             if damage_dealt > 0 and damage_dealt < 500:
-                reward += damage_dealt * 0.18
+                # Moltiplicatore post-kill: 1.5× dopo la prima kill
+                if mantis_killed >= 1:
+                    damage_reward = damage_dealt * 0.27  # 0.18 * 1.5
+                    info["post_kill_damage"] = True
+                else:
+                    damage_reward = damage_dealt * 0.18
+
+                reward += damage_reward
                 info["damage_dealt"] = damage_dealt
 
-        # Damage taken (high — two mantises are dangerous)
-        if damage_taken > 0:
-            reward -= 3.0
+                # Bonus per colpire durante recovery
+                if boss_recovering:
+                    reward += 0.30
+                    info["smart_hit"] = True
+
+        # Threshold bonus per progressione HP nel 2v1
+        if self.prev_boss_hp is not None and in_dual_phase:
+            for threshold, bonus in [(500, 1.5), (350, 2.5), (200, 4.0), (100, 6.0)]:
+                if self.prev_boss_hp > threshold >= boss_hp:
+                    reward += bonus
+                    info[f"dual_threshold_{threshold}"] = True
+
+        # ─── 4. DANNI SUBITI — penalità ridotta nel 2v1 ───
+        if hp_lost > 0:
+            if in_dual_phase:
+                reward -= 3.0 * hp_lost   # Ridotta da 4.0: più margine di esplorazione
+            else:
+                reward -= 3.5 * hp_lost
+            self.total_damage_taken += hp_lost
+
             if hazard_type == 2:
-                reward -= 2.5
+                reward -= 2.0  # Spike damage
+                info["damage_source"] = "SPIKES"
 
-        # Kill bonus
-        if mantis_killed > self.prev_mantis_killed:
-            kills_diff = mantis_killed - self.prev_mantis_killed
-            reward += 60.0 * kills_diff
-            info["event"] = f"MANTIS_KILLED_x{mantis_killed}"
+        # ─── 5. TELEGRAPH AWARENESS + ANTI-STALL ───
+        if boss_windup and self.last_action == 5:
+            reward -= 0.2  # Punito per attaccare durante il wind-up
+            info["bad_attack_timing"] = True
 
-        # ═══ PPO DENSE: Dual awareness shaping ═══
-        # Continuous reward for reactive movement when both mantises active
-        if active_count >= 2 and secondary_active:
-            if self.last_action in [4, 6]:  # JUMP or DASH
-                reward += 0.12
+        if boss_windup and self.last_action in [4, 6]:
+            reward += 0.1  # Premiato per evadere durante il wind-up
+
+        if self.steps_since_attack > 60:
+            reward -= 0.04  # Anti-stall: non stare fermo senza attaccare
+            info["stall_penalty"] = True
+
+        if self.consecutive_idle_steps > 30:
+            reward -= 0.015
+
+        # ─── 6. DUAL-SPECIFIC TACTICS ───
+        if in_dual_phase and secondary_active:
+            # Dodge bonus amplificato quando entrambe attaccano
+            if self.last_action in [4, 6]:
+                reward += 0.15
                 info["dual_dodge"] = True
-            # Extra: reward being in center of arena for better escape angles
+
+            # Posizionamento: premia il centro dell'arena
             player_x = state.get("playerPositionX", 0.0)
             arena_center = state.get("arenaCenterX", 0.0)
             if arena_center != 0.0:
                 center_dist = abs(player_x - arena_center) / 50.0
-                reward += max(0, 0.02 - center_dist * 0.01)  # Tiny center bonus
+                reward += max(0, 0.03 - center_dist * 0.015)
 
+        # ─── 7. KILL REWARDS — ribilanciati per incentivare la 2nd kill ───
+        if mantis_killed > self.prev_mantis_killed:
+            kills_diff = mantis_killed - self.prev_mantis_killed
+
+            if mantis_killed == 1:
+                # Prima kill: ridotta da 60 a 35 per non dominare il segnale
+                reward += 35.0
+                info["event"] = "FIRST_MANTIS_KILLED"
+            elif mantis_killed >= 2:
+                # Seconda kill: molto più alta per incentivare il proseguimento
+                reward += 85.0 * kills_diff
+                info["event"] = f"MANTIS_KILLED_x{mantis_killed}"
+
+        # ─── 8. TERMINAL REWARDS ───
         if done:
             if state.get("bossDefeated", False):
-                reward += 30.0
+                reward += 50.0  # Aumentato da 30
+                # Time bonus: premia vittorie veloci
+                time_bonus = max(0, (3000 - self.episode_steps) / 200.0)
+                reward += time_bonus
                 info["outcome"] = "VICTORY"
+                info["time_bonus"] = time_bonus
             elif is_dead:
-                reward -= 3.0
+                if in_dual_phase:
+                    reward -= 2.0  # Morte nel 2v1 meno punita (era -3.0)
+                else:
+                    reward -= 3.5  # Morte nel 1v1 più punita (non dovrebbe succedere)
 
+        # Update per frame successivo
         self.prev_boss_hp = boss_hp
         self.prev_mantis_killed = mantis_killed
+        self.prev_player_hp = current_player_hp
         return reward, info
 
     def _reward_phase5_mastery(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
-        """
-        PHASE 5: MASTERY (PPO Dense)
-        Dense: speed bonus + no-hit tracking + efficiency shaping
-        """
         reward = 0.0
         info = {}
 
@@ -502,45 +570,35 @@ class HollowKnightEnvPPO:
         mantis_killed = state.get("mantisLordsKilled", 0)
         boss_recovering = state.get("primaryMantisRecovering", False)
 
-        # ═══ PPO DENSE: Continuous tick with step penalty ═══
-        # Tiny negative per step to incentivize speed
         reward += 0.002
-        reward -= 0.001 * (self.episode_steps / 1000.0)  # Grows over time
+        reward -= 0.001 * (self.episode_steps / 1000.0)
 
-        # ═══ PPO DENSE: Aggressive distance shaping ═══
         safe = boss_recovering
         reward += self._distance_shaping(state, safe_to_approach=safe) * 1.5
 
-        # Damage dealt (highest multiplier — speed is king)
         if self.prev_boss_hp is not None:
             damage_dealt = self.prev_boss_hp - boss_hp
             if damage_dealt > 0 and damage_dealt < 500:
                 reward += damage_dealt * 0.22
                 info["damage_dealt"] = damage_dealt
 
-        # Damage taken (VERY high penalty — no-hit objective)
         if damage_taken > 0:
             reward -= 4.0
             if hazard_type == 2:
                 reward -= 3.5
 
-        # ═══ PPO DENSE: No-hit streak bonus (continuous) ═══
-        # The longer you go without taking damage, the more reward per step
         if damage_taken == 0 and self.episode_steps > 100:
             no_hit_bonus = min(0.03, self.episode_steps * 0.00002)
             reward += no_hit_bonus
 
-        # Kill
         if mantis_killed > self.prev_mantis_killed:
             reward += 30.0
 
         if done:
             if state.get("bossDefeated", False):
                 reward += 30.0
-                # ═══ PPO DENSE: Smoother speed bonus ═══
                 time_bonus = max(0, (3000 - self.episode_steps) / 150.0)
                 reward += time_bonus
-                # No-hit bonus
                 if self.total_damage_taken == 0:
                     reward += 20.0
                     info["outcome"] = "PERFECT_VICTORY"
@@ -553,10 +611,6 @@ class HollowKnightEnvPPO:
         self.prev_boss_hp = boss_hp
         self.prev_mantis_killed = mantis_killed
         return reward, info
-
-    # ═══════════════════════════════════════════════════════════════
-    # ENV API — Identical interface to DQN env
-    # ═══════════════════════════════════════════════════════════════
 
     def reset(self) -> Dict:
         state = self._receive_state()
@@ -577,7 +631,6 @@ class HollowKnightEnvPPO:
         self.total_damage_taken = 0
         self.episode_steps = 0
 
-        # ═══ PPO-SPECIFIC: Reset dense tracking state ═══
         self.prev_distance_to_boss = None
         self.prev_player_x = None
         self.consecutive_idle_steps = 0
@@ -592,7 +645,6 @@ class HollowKnightEnvPPO:
         self.last_action = action
         self.episode_steps += 1
 
-        # Track attack timing
         if action == 5:
             self.steps_since_attack = 0
         else:
