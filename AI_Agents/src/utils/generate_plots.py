@@ -1,37 +1,23 @@
 r"""
-Professional Training Visualization for Academic Presentations
-==============================================================
+═══════════════════════════════════════════════════════════════════════
+  Training & Inference Visualization — Mantis Lords RL
+  ═══════════════════════════════════════════════════════════════════
 
-Genera grafici di alta qualità per presentazioni universitarie di progetti
-di Reinforcement Learning. Supporta DQN, PPO e confronti multi-istanza.
+  Genera grafici per training (DQN/PPO) e inference (play.py).
 
-Grafici disponibili:
-1. Learning Curve con confidence interval
-2. Win Rate (Mantis Lords defeated rate)
-3. Sample Efficiency (reward per step)
-4. Loss Convergence Analysis
-5. Exploration vs Exploitation trade-off
-6. Multi-Instance Comparison
-7. Statistical Summary Table
-8. Publication-ready Dashboard
+  TRAINING:
+    python generate_plots.py --mode ppo --ppo-log training_output_ppo/phase_4/training_log_ppo.csv
+    python generate_plots.py --mode dqn --dqn-log training_output_dqn/phase_3/training_log_dqn.csv
+    python generate_plots.py --mode compare --dqn-log dqn.csv --ppo-log ppo.csv
+    python generate_plots.py --mode multi --multi-log training_log_ppo.csv
 
-Usage:
-    # Singolo algoritmo
-    python generate_plots.py --mode dqn --dqn-log training_output_dqn/phase_1/training_log_dqn.csv
+  INFERENCE (play.py):
+    python generate_plots.py --mode play --play-log play_log.csv
+    python generate_plots.py --mode play --play-log play_log.csv --output play_plots/
 
-    # PPO
-    python generate_plots.py --mode ppo --ppo-log training_output_ppo/phase_1/training_log_ppo.csv
-
-    # Confronto DQN vs PPO
-    python generate_plots.py --mode compare \
-        --dqn-log training_output_dqn/phase_1/training_log_dqn.csv \
-        --ppo-log training_output_ppo/phase_1/training_log_ppo.csv
-
-    # Multi-istanza (da train_ppo.py o train_dqn.py con --instances > 1)
-    python generate_plots.py --mode multi --multi-log training_output_ppo/phase_1/training_log_ppo.csv
-
-    # Tutti i grafici per presentazione
-    python generate_plots.py --mode presentation --dqn-log log.csv --output slides/
+  DASHBOARD:
+    python generate_plots.py --mode presentation --ppo-log ppo.csv --output slides/
+═══════════════════════════════════════════════════════════════════════
 """
 
 import argparse
@@ -42,832 +28,1014 @@ from typing import Tuple
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 from matplotlib.ticker import MaxNLocator
+import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 from scipy import stats
 from scipy.ndimage import uniform_filter1d
 
-# Suppress warnings for cleaner output
 warnings.filterwarnings("ignore")
 
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
 
-# Se True, moltiplica i reward per 5.0 per visualizzare i valori "reali" di gioco
-# invece di quelli scalati usati dalla rete neurale.
 RESTORE_REWARD_SCALE = True
 REWARD_SCALE_FACTOR = 5.0
 
-# Color palettes
-COLORS = {
-    "dqn": "#2E86AB",  # Blue
-    "ppo": "#A23B72",  # Magenta
-    "reward": "#F18F01",  # Orange
-    "loss": "#C73E1D",  # Red
-    "exploration": "#3A7CA5",  # Steel Blue
-    "success": "#2E8B57",  # Sea Green
-    "grid": "#E0E0E0",
-    "text": "#2C3E50",
-    "background": "#FAFAFA",
+# Modern color palette
+C = {
+    "dqn":       "#0ea5e9",   # Sky blue
+    "ppo":       "#c026d3",   # Fuchsia
+    "reward":    "#f59e0b",   # Amber
+    "loss":      "#ef4444",   # Red
+    "explore":   "#6366f1",   # Indigo
+    "success":   "#10b981",   # Emerald
+    "kill0":     "#ef4444",   # Red
+    "kill1":     "#f59e0b",   # Amber
+    "kill2":     "#6366f1",   # Indigo
+    "kill3":     "#10b981",   # Emerald (victory)
+    "v1":        "#94a3b8",   # Slate
+    "v2":        "#0ea5e9",   # Sky
+    "v3":        "#10b981",   # Emerald
+    "inst0":     "#0ea5e9",   # Sky
+    "inst1":     "#c026d3",   # Fuchsia
+    "inst2":     "#f59e0b",   # Amber
+    "grid":      "#e2e8f0",
+    "text":      "#1e293b",
+    "muted":     "#94a3b8",
+    "bg":        "#ffffff",
 }
 
 
-# Professional style setup
 def setup_style():
-    """Configure matplotlib for academic presentations."""
+    """Modern, clean matplotlib style."""
     plt.style.use("seaborn-v0_8-whitegrid")
-
-    plt.rcParams.update(
-        {
-            "figure.figsize": (12, 7),
-            "figure.dpi": 150,
-            "figure.facecolor": "white",
-            "figure.edgecolor": "white",
-            "font.family": "sans-serif",
-            "font.sans-serif": ["Arial", "DejaVu Sans", "Helvetica"],
-            "font.size": 12,
-            "axes.titlesize": 16,
-            "axes.labelsize": 13,
-            "xtick.labelsize": 11,
-            "ytick.labelsize": 11,
-            "legend.fontsize": 11,
-            "axes.linewidth": 1.2,
-            "axes.edgecolor": "#333333",
-            "axes.labelcolor": "#2C3E50",
-            "axes.titleweight": "bold",
-            "axes.labelweight": "medium",
-            "axes.spines.top": False,
-            "axes.spines.right": False,
-            "grid.alpha": 0.4,
-            "grid.linewidth": 0.8,
-            "legend.framealpha": 0.95,
-            "legend.edgecolor": "#CCCCCC",
-            "legend.fancybox": True,
-            "lines.linewidth": 2.0,
-            "lines.markersize": 6,
-            "savefig.dpi": 300,
-            "savefig.bbox": "tight",
-            "savefig.pad_inches": 0.1,
-            "savefig.facecolor": "white",
-        }
-    )
+    plt.rcParams.update({
+        "figure.figsize": (14, 8),
+        "figure.dpi": 150,
+        "figure.facecolor": "white",
+        "font.family": "sans-serif",
+        "font.sans-serif": ["Inter", "Segoe UI", "Arial", "DejaVu Sans"],
+        "font.size": 12,
+        "axes.titlesize": 16,
+        "axes.labelsize": 13,
+        "xtick.labelsize": 11,
+        "ytick.labelsize": 11,
+        "legend.fontsize": 11,
+        "axes.linewidth": 0.8,
+        "axes.edgecolor": "#cbd5e1",
+        "axes.labelcolor": C["text"],
+        "axes.titleweight": "bold",
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "grid.alpha": 0.3,
+        "grid.linewidth": 0.6,
+        "grid.color": C["grid"],
+        "legend.framealpha": 0.95,
+        "legend.edgecolor": "#e2e8f0",
+        "legend.fancybox": True,
+        "lines.linewidth": 2.2,
+        "savefig.dpi": 300,
+        "savefig.bbox": "tight",
+        "savefig.pad_inches": 0.15,
+        "savefig.facecolor": "white",
+    })
 
 
 setup_style()
 
 
 # ============================================================================
-# UTILITY FUNCTIONS
+# UTILITY
 # ============================================================================
 
-
 def smooth(data: np.ndarray, window: int = 20) -> np.ndarray:
-    """Apply moving average smoothing."""
     if len(data) < window:
         return data
     return uniform_filter1d(data.astype(float), size=window, mode="nearest")
 
 
-def compute_confidence_interval(
-    data: np.ndarray, window: int = 50, confidence: float = 0.95
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Compute rolling mean with confidence interval.
-    Returns: (mean, lower_bound, upper_bound)
-    """
+def ci(data: np.ndarray, window: int = 50, conf: float = 0.95):
+    """Rolling mean + confidence interval."""
     n = len(data)
-    means = []
-    lowers = []
-    uppers = []
-
+    means, lowers, uppers = [], [], []
     for i in range(n):
-        start = max(0, i - window + 1)
-        segment = data[start : i + 1]
-
-        mean = np.mean(segment)
-        std = np.std(segment)
-        n_samples = len(segment)
-
-        if n_samples > 1:
-            t_val = stats.t.ppf((1 + confidence) / 2, n_samples - 1)
-            margin = t_val * std / np.sqrt(n_samples)
+        seg = data[max(0, i - window + 1): i + 1]
+        m = np.mean(seg)
+        s = np.std(seg)
+        ns = len(seg)
+        if ns > 1:
+            t = stats.t.ppf((1 + conf) / 2, ns - 1)
+            margin = t * s / np.sqrt(ns)
         else:
             margin = 0
-
-        means.append(mean)
-        lowers.append(mean - margin)
-        uppers.append(mean + margin)
-
+        means.append(m)
+        lowers.append(m - margin)
+        uppers.append(m + margin)
     return np.array(means), np.array(lowers), np.array(uppers)
 
 
-def compute_win_rate(mantis_killed: np.ndarray, window: int = 50) -> np.ndarray:
-    """Compute rolling win rate (3 mantis killed = win)."""
-    wins = (mantis_killed >= 3).astype(float)
+def win_rate_rolling(mantis: np.ndarray, window: int = 50) -> np.ndarray:
+    wins = (mantis >= 3).astype(float)
     return smooth(wins * 100, window)
 
 
+def detect_iterations(df: pd.DataFrame):
+    """Auto-detect training iterations from episode numbers."""
+    eps = df["episode"].values
+    max_ep = eps.max()
+    if max_ep <= 2000:
+        return {"v1": df}
+    elif max_ep <= 4000:
+        return {
+            "v1": df[df["episode"] <= 2000],
+            "v2": df[(df["episode"] > 2000) & (df["episode"] <= 4000)],
+        }
+    else:
+        result = {
+            "v1": df[df["episode"] <= 2000],
+            "v2": df[(df["episode"] > 2000) & (df["episode"] <= 4000)],
+            "v3": df[df["episode"] > 4000],
+        }
+        return {k: v for k, v in result.items() if len(v) > 0}
+
+
+def add_subtitle(ax, text: str):
+    """Add muted subtitle under the title."""
+    ax.text(0.0, 1.04, text, transform=ax.transAxes, fontsize=10,
+            color=C["muted"], va="bottom")
+
+
+def stat_box(ax, lines: list, x=0.02, y=0.97):
+    """Overlay a stat box."""
+    text = "\n".join(lines)
+    ax.text(x, y, text, transform=ax.transAxes, fontsize=10, va="top",
+            fontfamily="monospace", bbox=dict(boxstyle="round,pad=0.4",
+            facecolor="white", edgecolor="#e2e8f0", alpha=0.92))
+
+
+# ============================================================================
+# DATA LOADING
+# ============================================================================
+
 def load_log(log_file: str) -> pd.DataFrame:
-    """
-    Load training log with enhanced error handling and column mapping.
-
-    Supports two CSV formats:
-
-      PPO (train_ppo.py → training_log_ppo.csv):
-        timestamp, instance_id, phase, episode, reward, steps,
-        mantis_killed, boss_hp, boss_defeated, entropy,
-        learning_rate, num_updates
-
-      DQN (train_dqn.py → training_log_dqn.csv):
-        timestamp, instance_id, phase, episode, reward, steps,
-        mantis_killed, boss_hp, boss_defeated, epsilon,
-        learning_rate, avg_loss
-    """
     if not os.path.exists(log_file):
-        raise FileNotFoundError(f"Log file not found: {log_file}")
-
+        raise FileNotFoundError(f"File non trovato: {log_file}")
     df = pd.read_csv(log_file)
-
-    # 1. Normalize Column Names
-    column_mapping = {
-        "total_reward": "reward",
-        "avg_loss": "loss",            # DQN log: avg_loss → loss
-        "instance_id": "instance",     # Both logs: instance_id → instance
-    }
-
-    for old, new in column_mapping.items():
+    remap = {"total_reward": "reward", "avg_loss": "loss", "instance_id": "instance"}
+    for old, new in remap.items():
         if old in df.columns and new not in df.columns:
             df[new] = df[old]
-
-    # 2. Create unified "exploration" column
-    #    PPO logs have "entropy", DQN logs have "epsilon".
-    #    Plot functions look for "exploration", "epsilon", or "entropy".
     if "epsilon" in df.columns and "exploration" not in df.columns:
         df["exploration"] = df["epsilon"]
     elif "entropy" in df.columns and "exploration" not in df.columns:
         df["exploration"] = df["entropy"]
-
-    # 3. Ensure numeric types (CSV values may arrive as strings)
-    numeric_cols = [
-        "reward", "steps", "mantis_killed", "boss_hp", "boss_defeated",
-        "epsilon", "entropy", "exploration", "learning_rate", "loss",
-        "num_updates", "episode", "instance", "phase",
-    ]
-    for col in numeric_cols:
+    numerics = ["reward", "steps", "mantis_killed", "boss_hp", "boss_defeated",
+                "epsilon", "entropy", "exploration", "learning_rate", "loss",
+                "num_updates", "episode", "instance", "phase"]
+    for col in numerics:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    # 4. Restore Reward Scale (Optional)
     if RESTORE_REWARD_SCALE and "reward" in df.columns:
         df["reward"] = df["reward"] * REWARD_SCALE_FACTOR
-        if "total_reward" in df.columns:
-            df["total_reward"] = df["total_reward"] * REWARD_SCALE_FACTOR
-
     return df
 
 
-def get_algorithm_from_log(df: pd.DataFrame) -> str:
-    """
-    Detect algorithm type from log columns.
-    PPO logs have 'entropy' column, DQN logs have 'epsilon' column.
-    """
-    has_epsilon = "epsilon" in df.columns
-    has_entropy = "entropy" in df.columns
+def load_play_log(log_file: str) -> pd.DataFrame:
+    if not os.path.exists(log_file):
+        raise FileNotFoundError(f"File non trovato: {log_file}")
+    df = pd.read_csv(log_file)
+    numerics = ["run", "mantis_killed", "boss_hp", "player_hp", "steps", "duration_sec"]
+    for col in numerics:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df
 
-    if has_epsilon and not has_entropy:
+
+def get_algo(df: pd.DataFrame) -> str:
+    if "epsilon" in df.columns and "entropy" not in df.columns:
         return "DQN"
-    elif has_entropy and not has_epsilon:
+    elif "entropy" in df.columns:
         return "PPO"
-    elif has_epsilon and has_entropy:
-        # Both present (shouldn't happen, but fallback to heuristic)
-        return "DQN" if df["epsilon"].mean() > 0.4 else "PPO"
-
-    # Last resort: check exploration column
-    if "exploration" in df.columns:
-        return "DQN" if df["exploration"].mean() > 0.4 else "PPO"
-
-    return "Unknown"
+    return "RL"
 
 
 # ============================================================================
-# CORE PLOTTING FUNCTIONS
+# TRAINING PLOTS
 # ============================================================================
 
-
-def plot_learning_curve(
-    df: pd.DataFrame,
-    output_dir: str,
-    algorithm: str = "DQN",
-    window: int = 50,
-    show_ci: bool = True,
-):
+def plot_learning_curve(df, out, algo="PPO", window=50):
     fig, ax = plt.subplots(figsize=(14, 8))
-
     episodes = df["episode"].values
     rewards = df["reward"].values
+    color = C["dqn"] if algo == "DQN" else C["ppo"]
 
-    color = COLORS["dqn"] if algorithm == "DQN" else COLORS["ppo"]
-
-    ax.plot(
-        episodes, rewards, alpha=0.15, color=color, linewidth=0.8, label="_nolegend_"
-    )
-
-    if show_ci:
-        mean, lower, upper = compute_confidence_interval(rewards, window)
-        ax.fill_between(
-            episodes,
-            lower,
-            upper,
-            alpha=0.25,
-            color=color,
-            label="95% Confidence Interval",
-        )
-        ax.plot(
-            episodes,
-            mean,
-            color=color,
-            linewidth=2.5,
-            label=f"{algorithm} Mean Reward (window={window})",
-        )
-    else:
-        smoothed = smooth(rewards, window)
-        ax.plot(
-            episodes,
-            smoothed,
-            color=color,
-            linewidth=2.5,
-            label=f"{algorithm} Smoothed Reward",
-        )
-
-    ax.axhline(y=0, color="#888888", linestyle="--", linewidth=1, alpha=0.6)
+    ax.plot(episodes, rewards, alpha=0.08, color=color, linewidth=0.5)
+    mean, lower, upper = ci(rewards, window)
+    ax.fill_between(episodes, lower, upper, alpha=0.15, color=color)
+    ax.plot(episodes, mean, color=color, linewidth=2.5, label=f"Media mobile (w={window})")
+    ax.axhline(y=0, color=C["muted"], linestyle="--", linewidth=0.8, alpha=0.5)
 
     best_idx = np.argmax(rewards)
-    best_reward = rewards[best_idx]
-    ax.annotate(
-        f"Best: {best_reward:.1f}",
-        xy=(episodes[best_idx], best_reward),
-        xytext=(10, 10),
-        textcoords="offset points",
-        fontsize=10,
-        color=color,
-        arrowprops=dict(arrowstyle="->", color=color, alpha=0.7),
-    )
+    ax.annotate(f"Best: {rewards[best_idx]:.0f}", xy=(episodes[best_idx], rewards[best_idx]),
+                xytext=(15, 10), textcoords="offset points", fontsize=10, color=color,
+                fontweight="bold", arrowprops=dict(arrowstyle="->", color=color, alpha=0.6))
 
-    ax.set_xlabel("Training Episode", fontweight="bold")
-    ax.set_ylabel("Cumulative Reward", fontweight="bold")
-    ax.set_title(f"{algorithm} Learning Curve", fontweight="bold", fontsize=18, pad=15)
-    ax.legend(loc="lower right", framealpha=0.95)
-    ax.grid(True, alpha=0.3)
-    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    ax.set_xlabel("Episodio")
+    ax.set_ylabel("Reward cumulativo")
+    ax.set_title(f"{algo} — Learning Curve")
+    add_subtitle(ax, f"{len(episodes)} episodi · 95% CI")
+    ax.legend(loc="lower right")
+    ax.grid(True, alpha=0.25)
 
-    final_mean = np.mean(rewards[-window:]) if len(rewards) >= window else np.mean(rewards)
-    initial_mean = np.mean(rewards[:window]) if len(rewards) >= window else rewards[0]
-    improvement = ((final_mean - initial_mean) / abs(initial_mean) * 100) if initial_mean != 0 else 0
-
-    textstr = f"Episodes: {len(episodes)}\nImprovement: {improvement:+.1f}%"
-    if RESTORE_REWARD_SCALE:
-        textstr += "\n(Rewards scaled x5.0)"
-
-    props = dict(boxstyle="round", facecolor="white", alpha=0.8, edgecolor="#CCCCCC")
-    ax.text(
-        0.02,
-        0.98,
-        textstr,
-        transform=ax.transAxes,
-        fontsize=10,
-        verticalalignment="top",
-        bbox=props,
-    )
+    final = np.mean(rewards[-window:]) if len(rewards) >= window else np.mean(rewards)
+    initial = np.mean(rewards[:window]) if len(rewards) >= window else rewards[0]
+    improv = ((final - initial) / abs(initial) * 100) if initial != 0 else 0
+    stat_box(ax, [f"Episodi: {len(episodes)}", f"Best: {rewards[best_idx]:.0f}",
+                  f"Finale: {final:.0f}", f"Δ: {improv:+.0f}%"])
 
     plt.tight_layout()
-    output_path = os.path.join(output_dir, f"{algorithm.lower()}_learning_curve.png")
-    plt.savefig(output_path, dpi=300, bbox_inches="tight", facecolor="white")
+    plt.savefig(os.path.join(out, f"{algo.lower()}_learning_curve.png"), dpi=300, facecolor="white")
     plt.close()
-    print(f"  [OK] {output_path}")
+    print(f"  [OK] {algo.lower()}_learning_curve.png")
 
 
-def plot_win_rate(
-    df: pd.DataFrame, output_dir: str, algorithm: str = "DQN", window: int = 50
-):
+def plot_kill_and_win_rate(df, out, algo="PPO", window=50):
     if "mantis_killed" not in df.columns:
-        print("  [SKIP] Win rate plot - 'mantis_killed' column not found")
+        return
+    fig, ax1 = plt.subplots(figsize=(14, 7))
+    episodes = df["episode"].values
+    mantis = df["mantis_killed"].values
+
+    kill_smooth = smooth(mantis.astype(float), window)
+    ax1.plot(episodes, kill_smooth, color=C["dqn"] if algo == "DQN" else C["ppo"],
+             linewidth=2.5, label="Kill rate medio")
+    ax1.axhline(y=1.8, color=C["muted"], linestyle="--", linewidth=1, alpha=0.6, label="Target 1.8")
+    ax1.set_xlabel("Episodio")
+    ax1.set_ylabel("Kill rate medio", color=C["text"])
+    ax1.set_ylim([-0.1, max(3.2, kill_smooth.max() + 0.2)])
+    ax1.set_yticks([0, 1, 2, 3])
+
+    ax2 = ax1.twinx()
+    wr = win_rate_rolling(mantis, window)
+    ax2.fill_between(episodes, 0, wr, alpha=0.12, color=C["success"])
+    ax2.plot(episodes, wr, color=C["success"], linewidth=2, linestyle="--", label="Win rate %")
+    ax2.set_ylabel("Win rate (%)", color=C["success"])
+    ax2.set_ylim([-2, 105])
+
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper left")
+
+    total_wins = np.sum(mantis >= 3)
+    ax1.set_title(f"{algo} — Kill Rate & Win Rate")
+    add_subtitle(ax1, f"{total_wins} vittorie su {len(episodes)} episodi")
+    ax1.grid(True, alpha=0.25)
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(out, f"{algo.lower()}_kill_win_rate.png"), dpi=300, facecolor="white")
+    plt.close()
+    print(f"  [OK] {algo.lower()}_kill_win_rate.png")
+
+
+def plot_cross_iteration(df, out, algo="PPO"):
+    """v1 vs v2 vs v3 a pari posizione."""
+    iters = detect_iterations(df)
+    if len(iters) < 2:
+        print("  [SKIP] Cross-iteration — solo 1 iterazione trovata")
         return
 
     fig, ax = plt.subplots(figsize=(14, 7))
+    colors = {"v1": C["v1"], "v2": C["v2"], "v3": C["v3"]}
+    bar_width = 0.25
 
-    episodes = df["episode"].values
-    mantis = df["mantis_killed"].values
-    color = COLORS["success"]
+    windows = list(range(0, 2000, 250))
+    x = np.arange(len(windows))
 
-    win_rate = compute_win_rate(mantis, window)
-    wins = mantis >= 3
+    for i, (label, it_df) in enumerate(iters.items()):
+        offset = 2000 * (i) if label != "v1" else 0
+        if label == "v2": offset = 2000
+        elif label == "v3": offset = 4000
+        else: offset = 0
 
-    ax.scatter(episodes[wins], np.ones(np.sum(wins)) * 100, alpha=0.3, color=color, s=20, label="Victories")
-    ax.plot(episodes, win_rate, color=color, linewidth=2.5, label=f"Win Rate (rolling {window} episodes)")
-    ax.fill_between(episodes, 0, win_rate, alpha=0.2, color=color)
-    ax.axhline(y=50, color="#888888", linestyle="--", linewidth=1, alpha=0.6, label="50% Baseline")
+        rates = []
+        for start in windows:
+            end = start + 250
+            mask = ((it_df["episode"] - offset) > start) & ((it_df["episode"] - offset) <= end)
+            chunk = it_df[mask]
+            if len(chunk) > 0 and "mantis_killed" in chunk.columns:
+                k2 = (chunk["mantis_killed"] >= 2).sum()
+                rates.append(k2 / len(chunk) * 100)
+            else:
+                rates.append(0)
 
-    ax.set_xlabel("Training Episode", fontweight="bold")
-    ax.set_ylabel("Win Rate (%)", fontweight="bold")
-    ax.set_title(f"{algorithm} Victory Rate Against Mantis Lords", fontweight="bold", fontsize=18, pad=15)
-    ax.set_ylim([-5, 105])
-    ax.legend(loc="lower right", framealpha=0.95)
-    ax.grid(True, alpha=0.3)
+        pos = x + i * bar_width - bar_width * (len(iters) - 1) / 2
+        ax.bar(pos, rates, bar_width * 0.85, color=colors.get(label, C["muted"]),
+               alpha=0.75, label=label.upper(), edgecolor="white", linewidth=0.5)
 
-    total_wins = np.sum(wins)
-    total_games = len(episodes)
-    overall_rate = total_wins / total_games * 100
-    final_rate = win_rate[-1] if len(win_rate) > 0 else 0
-
-    textstr = f"Total Wins: {total_wins}/{total_games}\nOverall: {overall_rate:.1f}%\nFinal Rate: {final_rate:.1f}%"
-    props = dict(boxstyle="round", facecolor="white", alpha=0.8, edgecolor="#CCCCCC")
-    ax.text(0.02, 0.98, textstr, transform=ax.transAxes, fontsize=10, verticalalignment="top", bbox=props)
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"{s}-{s+250}" for s in windows], rotation=30, ha="right", fontsize=9)
+    ax.set_xlabel("Posizione relativa nella run (episodi)")
+    ax.set_ylabel("2+ kill rate (%)")
+    ax.set_title(f"{algo} — Confronto Cross-Iterazione")
+    add_subtitle(ax, f"{len(iters)} iterazioni · 2+ kill rate a pari posizione")
+    ax.legend()
+    ax.grid(True, alpha=0.25, axis="y")
 
     plt.tight_layout()
-    output_path = os.path.join(output_dir, f"{algorithm.lower()}_win_rate.png")
-    plt.savefig(output_path, dpi=300, bbox_inches="tight", facecolor="white")
+    plt.savefig(os.path.join(out, f"{algo.lower()}_cross_iteration.png"), dpi=300, facecolor="white")
     plt.close()
-    print(f"  [OK] {output_path}")
+    print(f"  [OK] {algo.lower()}_cross_iteration.png")
 
 
-def plot_sample_efficiency(
-    df: pd.DataFrame, output_dir: str, algorithm: str = "DQN", window: int = 50
-):
-    if "steps" not in df.columns:
-        print("  [SKIP] Sample efficiency plot - 'steps' column not found")
+def plot_per_instance(df, out, algo="PPO", window=30):
+    if "instance" not in df.columns:
+        return
+    instances = sorted(df["instance"].dropna().unique())
+    if len(instances) < 2:
         return
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
+    inst_colors = [C["inst0"], C["inst1"], C["inst2"]]
 
-    episodes = df["episode"].values
-    rewards = df["reward"].values
-    steps = df["steps"].values
-    color = COLORS["dqn"] if algorithm == "DQN" else COLORS["ppo"]
+    for i, inst in enumerate(instances[:3]):
+        idf = df[df["instance"] == inst]
+        kills = smooth(idf["mantis_killed"].values.astype(float), window)
+        color = inst_colors[i % 3]
+        ax1.plot(range(len(kills)), kills, color=color, linewidth=2, label=f"Inst {int(inst)}", alpha=0.85)
 
-    cumulative_steps = np.cumsum(steps)
-    cumulative_reward = np.cumsum(rewards)
+    ax1.set_xlabel("Episodio (per istanza)")
+    ax1.set_ylabel("Kill rate medio")
+    ax1.set_title("Kill Rate per Istanza")
+    ax1.legend()
+    ax1.grid(True, alpha=0.25)
 
-    ax1.plot(cumulative_steps, cumulative_reward, color=color, linewidth=2)
-    ax1.fill_between(cumulative_steps, 0, cumulative_reward, alpha=0.2, color=color)
-    ax1.set_xlabel("Total Environment Steps", fontweight="bold")
-    ax1.set_ylabel("Cumulative Reward", fontweight="bold")
-    ax1.set_title("Sample Efficiency", fontweight="bold", fontsize=14)
-    ax1.grid(True, alpha=0.3)
+    # Boxplot
+    data = [df[df["instance"] == inst]["reward"].values for inst in instances[:3]]
+    bp = ax2.boxplot(data, patch_artist=True, widths=0.6)
+    for j, patch in enumerate(bp["boxes"]):
+        patch.set_facecolor(inst_colors[j % 3])
+        patch.set_alpha(0.6)
+    for element in ["whiskers", "caps", "medians"]:
+        for line in bp[element]:
+            line.set_color(C["text"])
+            line.set_linewidth(1.2)
+    ax2.set_xticklabels([f"Inst {int(inst)}" for inst in instances[:3]])
+    ax2.set_ylabel("Distribuzione Reward")
+    ax2.set_title("Performance per Istanza")
+    ax2.grid(True, alpha=0.25, axis="y")
 
-    reward_per_step = rewards / np.maximum(steps, 1)
-    smoothed_rps = smooth(reward_per_step, window)
-
-    ax2.plot(episodes, reward_per_step, alpha=0.2, color=color, linewidth=0.8)
-    ax2.plot(episodes, smoothed_rps, color=color, linewidth=2.5, label="Reward per Step")
-    ax2.set_xlabel("Training Episode", fontweight="bold")
-    ax2.set_ylabel("Reward / Step", fontweight="bold")
-    ax2.set_title("Per-Episode Efficiency", fontweight="bold", fontsize=14)
-    ax2.legend(loc="best")
-    ax2.grid(True, alpha=0.3)
-
-    plt.suptitle(f"{algorithm} Sample Efficiency Analysis", fontweight="bold", fontsize=18, y=1.02)
+    plt.suptitle(f"{algo} — Analisi Multi-Istanza", fontweight="bold", fontsize=16)
     plt.tight_layout()
-    output_path = os.path.join(output_dir, f"{algorithm.lower()}_sample_efficiency.png")
-    plt.savefig(output_path, dpi=300, bbox_inches="tight", facecolor="white")
+    plt.savefig(os.path.join(out, f"{algo.lower()}_per_instance.png"), dpi=300, facecolor="white")
     plt.close()
-    print(f"  [OK] {output_path}")
+    print(f"  [OK] {algo.lower()}_per_instance.png")
 
 
-def plot_loss_analysis(
-    df: pd.DataFrame, output_dir: str, algorithm: str = "DQN", window: int = 30
-):
-    fig, ax = plt.subplots(figsize=(14, 7))
-    episodes = df["episode"].values
-
-    # Unified loss handling
-    if "loss" in df.columns:
-        losses = df["loss"].values
-        label = "Loss"
-    elif "avg_loss" in df.columns:
-        losses = df["avg_loss"].values
-        label = "Loss"
-    elif "actor_loss" in df.columns:
-        losses = df["actor_loss"].values + df.get("critic_loss", 0)
-        label = "Total Loss"
-    else:
-        print("  [SKIP] Loss plot - no loss column found")
-        return
-
-    valid_mask = np.isfinite(losses)
-    episodes_valid = episodes[valid_mask]
-    losses_valid = losses[valid_mask]
-
-    if len(losses_valid) == 0:
-        return
-
-    color = COLORS["loss"]
-    ax.plot(episodes_valid, losses_valid, alpha=0.2, color=color, linewidth=0.8)
-    smoothed = smooth(losses_valid, window)
-    ax.plot(episodes_valid, smoothed, color=color, linewidth=2.5, label=f"{label} (smoothed)")
-
-    if len(episodes_valid) > 10:
-        z = np.polyfit(episodes_valid, losses_valid, 1)
-        p = np.poly1d(z)
-        ax.plot(episodes_valid, p(episodes_valid), "--", color="#333333", linewidth=1.5, alpha=0.7, label=f"Trend (slope={z[0]:.2e})")
-
-    ax.set_xlabel("Training Episode", fontweight="bold")
-    ax.set_ylabel("Loss Value", fontweight="bold")
-    ax.set_title(f"{algorithm} Loss Convergence", fontweight="bold", fontsize=18, pad=15)
-    ax.legend(loc="upper right")
-    ax.grid(True, alpha=0.3)
-
-    # Use log scale if loss varies wildly
-    if np.max(losses_valid) > 100:
-        ax.set_yscale("log")
-
-    plt.tight_layout()
-    output_path = os.path.join(output_dir, f"{algorithm.lower()}_loss_convergence.png")
-    plt.savefig(output_path, dpi=300, bbox_inches="tight", facecolor="white")
-    plt.close()
-    print(f"  [OK] {output_path}")
-
-
-def plot_exploration_exploitation(
-    df: pd.DataFrame, output_dir: str, algorithm: str = "DQN"
-):
+def plot_exploration(df, out, algo="PPO"):
     fig, ax1 = plt.subplots(figsize=(14, 7))
-
     episodes = df["episode"].values
-    rewards = df["reward"].values
+    rewards = smooth(df["reward"].values, 30)
 
-    color1 = COLORS["reward"]
-    smoothed_rewards = smooth(rewards, 30)
-    ax1.plot(episodes, smoothed_rewards, color=color1, linewidth=2.5, label="Reward")
-    ax1.fill_between(episodes, 0, smoothed_rewards, alpha=0.1, color=color1)
-    ax1.set_xlabel("Training Episode", fontweight="bold")
-    ax1.set_ylabel("Cumulative Reward", color=color1, fontweight="bold")
-    ax1.tick_params(axis="y", labelcolor=color1)
+    ax1.fill_between(episodes, 0, rewards, alpha=0.08, color=C["reward"])
+    ax1.plot(episodes, rewards, color=C["reward"], linewidth=2.2, label="Reward")
+    ax1.set_xlabel("Episodio")
+    ax1.set_ylabel("Reward (smoothed)", color=C["reward"])
 
     ax2 = ax1.twinx()
-    color2 = COLORS["exploration"]
-
     if "epsilon" in df.columns:
-        exploration = df["epsilon"].values
-        label = "Epsilon (Exploration Rate)"
-        ax2.set_ylim([0, 1.1])
+        ax2.plot(episodes, df["epsilon"].values, color=C["explore"], linewidth=2.2,
+                 linestyle="--", label="Epsilon")
+        ax2.set_ylabel("Epsilon", color=C["explore"])
     elif "entropy" in df.columns:
-        exploration = df["entropy"].values
-        label = "Policy Entropy"
-    elif "exploration" in df.columns:
-        exploration = df["exploration"].values
-        label = "Exploration Metric"
+        ax2.plot(episodes, smooth(df["entropy"].values, 20), color=C["explore"],
+                 linewidth=2.2, linestyle="--", label="Entropy")
+        ax2.set_ylabel("Entropy", color=C["explore"])
     else:
-        print("  [SKIP] Exploration plot - no exploration column found")
         plt.close()
         return
-
-    ax2.plot(episodes, exploration, color=color2, linewidth=2.5, linestyle="--", label=label)
-    ax2.set_ylabel(label, color=color2, fontweight="bold")
-    ax2.tick_params(axis="y", labelcolor=color2)
 
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax1.legend(lines1 + lines2, labels1 + labels2, loc="center right")
-
-    ax1.set_title(f"{algorithm} Exploration-Exploitation Trade-off", fontweight="bold", fontsize=18, pad=15)
-    ax1.grid(True, alpha=0.3)
+    ax1.set_title(f"{algo} — Exploration vs Exploitation")
+    ax1.grid(True, alpha=0.25)
 
     plt.tight_layout()
-    output_path = os.path.join(output_dir, f"{algorithm.lower()}_exploration_exploitation.png")
-    plt.savefig(output_path, dpi=300, bbox_inches="tight", facecolor="white")
+    plt.savefig(os.path.join(out, f"{algo.lower()}_exploration.png"), dpi=300, facecolor="white")
     plt.close()
-    print(f"  [OK] {output_path}")
+    print(f"  [OK] {algo.lower()}_exploration.png")
 
 
-def plot_mantis_progress(
-    df: pd.DataFrame, output_dir: str, algorithm: str = "DQN", window: int = 30
-):
+def plot_outcome_evolution(df, out, algo="PPO"):
+    """Stacked bar di kill distribution per chunk temporale."""
     if "mantis_killed" not in df.columns:
-        print("  [SKIP] Mantis progress plot - 'mantis_killed' column not found")
         return
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
-
+    fig, ax = plt.subplots(figsize=(14, 7))
     episodes = df["episode"].values
     mantis = df["mantis_killed"].values
-    color = COLORS["dqn"] if algorithm == "DQN" else COLORS["ppo"]
 
-    smoothed = smooth(mantis, window)
-    ax1.scatter(episodes, mantis, alpha=0.3, color=color, s=15, label="Per Episode")
-    ax1.plot(episodes, smoothed, color=color, linewidth=2.5, label=f"Moving Avg (w={window})")
-    ax1.axhline(y=3, color=COLORS["success"], linestyle="--", linewidth=2, alpha=0.8, label="Victory Threshold")
+    chunk_size = max(250, len(df) // 12)
+    labels, k0s, k1s, k2s, k3s = [], [], [], [], []
 
-    ax1.set_xlabel("Training Episode", fontweight="bold")
-    ax1.set_ylabel("Mantis Lords Defeated", fontweight="bold")
-    ax1.set_title("Progress Over Training", fontweight="bold", fontsize=14)
-    ax1.set_ylim([-0.2, 3.5])
-    ax1.set_yticks([0, 1, 2, 3])
-    ax1.legend(loc="lower right")
-    ax1.grid(True, alpha=0.3)
+    for start in range(0, len(df), chunk_size):
+        end = min(start + chunk_size, len(df))
+        chunk = mantis[start:end]
+        ep_start = int(episodes[start])
+        ep_end = int(episodes[end - 1])
+        labels.append(f"{ep_start}-{ep_end}")
+        total = len(chunk)
+        k0s.append(np.sum(chunk == 0) / total * 100)
+        k1s.append(np.sum(chunk == 1) / total * 100)
+        k2s.append(np.sum(chunk == 2) / total * 100)
+        k3s.append(np.sum(chunk >= 3) / total * 100)
 
-    counts = [np.sum(mantis == i) for i in range(4)]
-    bars = ax2.bar([0, 1, 2, 3], counts, color=[color, color, color, COLORS["success"]], alpha=0.8, edgecolor="black")
+    x = np.arange(len(labels))
+    w = 0.65
+    ax.bar(x, k0s, w, label="0 kill", color=C["kill0"], alpha=0.75)
+    ax.bar(x, k1s, w, bottom=k0s, label="1 kill", color=C["kill1"], alpha=0.75)
+    b2 = np.array(k0s) + np.array(k1s)
+    ax.bar(x, k2s, w, bottom=b2, label="2 kill", color=C["kill2"], alpha=0.75)
+    b3 = b2 + np.array(k2s)
+    ax.bar(x, k3s, w, bottom=b3, label="3 kill (vittoria)", color=C["kill3"], alpha=0.75)
 
-    total = len(mantis)
-    for bar, count in zip(bars, counts):
-        height = bar.get_height()
-        ax2.annotate(f"{count}\n({count/total*100:.1f}%)", xy=(bar.get_x() + bar.get_width() / 2, height),
-                     xytext=(0, 3), textcoords="offset points", ha="center", va="bottom", fontsize=11, fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=40, ha="right", fontsize=9)
+    ax.set_xlabel("Episodi")
+    ax.set_ylabel("Distribuzione (%)")
+    ax.set_title(f"{algo} — Evoluzione Outcome")
+    add_subtitle(ax, "Come cambia la distribuzione dei kill nel tempo")
+    ax.legend(loc="upper left", ncol=4)
+    ax.set_ylim([0, 105])
+    ax.grid(True, alpha=0.2, axis="y")
 
-    ax2.set_xlabel("Mantis Lords Defeated", fontweight="bold")
-    ax2.set_ylabel("Number of Episodes", fontweight="bold")
-    ax2.set_title("Outcome Distribution", fontweight="bold", fontsize=14)
-    ax2.set_xticks([0, 1, 2, 3])
-    ax2.set_xticklabels(["0 (Loss)", "1", "2", "3 (Victory)"])
-    ax2.grid(True, alpha=0.3, axis="y")
-
-    plt.suptitle(f"{algorithm} Mantis Lords Combat Performance", fontweight="bold", fontsize=18, y=1.02)
     plt.tight_layout()
-    output_path = os.path.join(output_dir, f"{algorithm.lower()}_mantis_progress.png")
-    plt.savefig(output_path, dpi=300, bbox_inches="tight", facecolor="white")
+    plt.savefig(os.path.join(out, f"{algo.lower()}_outcome_evolution.png"), dpi=300, facecolor="white")
     plt.close()
-    print(f"  [OK] {output_path}")
+    print(f"  [OK] {algo.lower()}_outcome_evolution.png")
 
 
-def plot_multi_instance(df: pd.DataFrame, output_dir: str, window: int = 30):
-    # Resolve column name: load_log maps instance_id → instance,
-    # but add fallback in case raw DataFrame is passed directly
-    if "instance" not in df.columns and "instance_id" in df.columns:
-        df = df.copy()
-        df["instance"] = df["instance_id"]
-
-    if "instance" not in df.columns:
-        print("  [SKIP] Multi-instance plot - no 'instance' or 'instance_id' column found")
+def plot_loss(df, out, algo="PPO", window=30):
+    loss_col = None
+    for col in ["loss", "avg_loss"]:
+        if col in df.columns:
+            loss_col = col
+            break
+    if not loss_col:
+        print("  [SKIP] Loss — nessuna colonna loss trovata")
         return
 
-    instances = df["instance"].unique()
-    n_instances = len(instances)
-    if n_instances < 2:
+    fig, ax = plt.subplots(figsize=(14, 7))
+    episodes = df["episode"].values
+    losses = df[loss_col].values
+    valid = np.isfinite(losses)
+    if np.sum(valid) == 0:
+        plt.close()
         return
 
-    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-    colors = plt.cm.viridis(np.linspace(0, 0.8, n_instances))
+    ax.plot(episodes[valid], losses[valid], alpha=0.1, color=C["loss"], linewidth=0.5)
+    ax.plot(episodes[valid], smooth(losses[valid], window), color=C["loss"], linewidth=2.5, label="Loss (smoothed)")
 
-    # Top-left: Learning curves per instance
-    ax = axes[0, 0]
-    for i, inst in enumerate(instances):
-        inst_df = df[df["instance"] == inst]
-        rewards = inst_df["reward"].values
-        smoothed = smooth(rewards, window)
-        ax.plot(range(len(smoothed)), smoothed, color=colors[i], linewidth=2, label=f"Instance {inst}", alpha=0.8)
-    ax.set_xlabel("Episode (per instance)", fontweight="bold")
-    ax.set_ylabel("Reward", fontweight="bold")
-    ax.set_title("Learning Curves by Instance", fontweight="bold")
-    ax.legend(loc="lower right")
-    ax.grid(True, alpha=0.3)
+    if np.sum(valid) > 10:
+        z = np.polyfit(episodes[valid], losses[valid], 1)
+        p = np.poly1d(z)
+        ax.plot(episodes[valid], p(episodes[valid]), "--", color=C["text"], linewidth=1.2,
+                alpha=0.5, label=f"Trend (slope={z[0]:.2e})")
 
-    # Top-right: Global learning curve
-    ax = axes[0, 1]
-    global_rewards = df.groupby("episode")["reward"].mean()
-    mean, lower, upper = compute_confidence_interval(global_rewards.values, window)
-    episodes = global_rewards.index.values
-    ax.fill_between(episodes, lower, upper, alpha=0.3, color=COLORS["dqn"])
-    ax.plot(episodes, mean, color=COLORS["dqn"], linewidth=2.5)
-    ax.set_xlabel("Global Episode", fontweight="bold")
-    ax.set_ylabel("Mean Reward", fontweight="bold")
-    ax.set_title("Combined Learning Curve (All Instances)", fontweight="bold")
-    ax.grid(True, alpha=0.3)
+    ax.set_xlabel("Episodio")
+    ax.set_ylabel("Loss")
+    ax.set_title(f"{algo} — Loss Convergence")
+    ax.legend(loc="upper right")
+    ax.grid(True, alpha=0.25)
+    if np.max(losses[valid]) > 100:
+        ax.set_yscale("log")
 
-    # Bottom-left: Boxplot
-    ax = axes[1, 0]
-    rewards_by_instance = [df[df["instance"] == inst]["reward"].values for inst in instances]
-    bp = ax.boxplot(rewards_by_instance, patch_artist=True)
-    for patch, color in zip(bp["boxes"], colors):
-        patch.set_facecolor(color)
-        patch.set_alpha(0.7)
-    ax.set_xticklabels([f"Inst {i}" for i in instances])
-    ax.set_xlabel("Instance", fontweight="bold")
-    ax.set_ylabel("Reward Distribution", fontweight="bold")
-    ax.set_title("Performance Distribution by Instance", fontweight="bold")
-    ax.grid(True, alpha=0.3, axis="y")
-
-    # Bottom-right: Stats
-    ax = axes[1, 1]
-    ax.axis("off")
-    stats_text = "MULTI-INSTANCE STATISTICS\n" + "=" * 40 + "\n\n"
-    for inst in instances:
-        inst_df = df[df["instance"] == inst]
-        rewards = inst_df["reward"].values
-        stats_text += f"Instance {inst}:\n"
-        stats_text += f"  Episodes: {len(rewards)}\n"
-        stats_text += f"  Mean: {np.mean(rewards):.2f}\n"
-        stats_text += f"  Max: {np.max(rewards):.2f}\n"
-        if "mantis_killed" in inst_df.columns:
-            wins = np.sum(inst_df["mantis_killed"].values >= 3)
-            stats_text += f"  Wins: {wins} ({wins/len(rewards)*100:.1f}%)\n"
-        stats_text += "\n"
-
-    ax.text(0.1, 0.9, stats_text, transform=ax.transAxes, fontsize=10, verticalalignment="top", fontfamily="monospace",
-            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
-
-    plt.suptitle("Multi-Instance Training Analysis", fontweight="bold", fontsize=18, y=0.98)
     plt.tight_layout()
-    output_path = os.path.join(output_dir, "multi_instance_analysis.png")
-    plt.savefig(output_path, dpi=300, bbox_inches="tight", facecolor="white")
+    plt.savefig(os.path.join(out, f"{algo.lower()}_loss.png"), dpi=300, facecolor="white")
     plt.close()
-    print(f"  [OK] {output_path}")
+    print(f"  [OK] {algo.lower()}_loss.png")
 
 
-def plot_presentation_dashboard(
-    df: pd.DataFrame, output_dir: str, algorithm: str = "DQN", window: int = 50
-):
-    fig = plt.figure(figsize=(20, 14))
-    gs = GridSpec(3, 3, figure=fig, hspace=0.35, wspace=0.3)
-
+def plot_sample_efficiency(df, out, algo="PPO", window=50):
+    if "steps" not in df.columns:
+        return
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
+    color = C["dqn"] if algo == "DQN" else C["ppo"]
     episodes = df["episode"].values
     rewards = df["reward"].values
-    color = COLORS["dqn"] if algorithm == "DQN" else COLORS["ppo"]
+    steps = df["steps"].values
 
-    # 1. Main Curve
-    ax1 = fig.add_subplot(gs[0, :2])
-    mean, lower, upper = compute_confidence_interval(rewards, window)
-    ax1.fill_between(episodes, lower, upper, alpha=0.25, color=color)
-    ax1.plot(episodes, mean, color=color, linewidth=3, label="Mean Reward")
-    ax1.axhline(y=0, color="#888888", linestyle="--", linewidth=1, alpha=0.5)
-    ax1.set_xlabel("Training Episode", fontweight="bold", fontsize=12)
-    ax1.set_ylabel("Cumulative Reward", fontweight="bold", fontsize=12)
-    ax1.set_title("Learning Curve with 95% Confidence Interval", fontweight="bold", fontsize=14)
-    ax1.legend(loc="lower right")
-    ax1.grid(True, alpha=0.3)
+    cum_steps = np.cumsum(steps)
+    cum_reward = np.cumsum(rewards)
+    ax1.plot(cum_steps / 1000, cum_reward, color=color, linewidth=2)
+    ax1.fill_between(cum_steps / 1000, 0, cum_reward, alpha=0.1, color=color)
+    ax1.set_xlabel("Steps totali (migliaia)")
+    ax1.set_ylabel("Reward cumulativo")
+    ax1.set_title("Sample Efficiency", fontweight="bold", fontsize=13)
+    ax1.grid(True, alpha=0.25)
+
+    rps = rewards / np.maximum(steps, 1)
+    ax2.plot(episodes, rps, alpha=0.1, color=color, linewidth=0.5)
+    ax2.plot(episodes, smooth(rps, window), color=color, linewidth=2.5, label="Reward/step")
+    ax2.set_xlabel("Episodio")
+    ax2.set_ylabel("Reward / Step")
+    ax2.set_title("Efficienza per Episodio", fontweight="bold", fontsize=13)
+    ax2.legend()
+    ax2.grid(True, alpha=0.25)
+
+    plt.suptitle(f"{algo} — Sample Efficiency", fontweight="bold", fontsize=16)
+    plt.tight_layout()
+    plt.savefig(os.path.join(out, f"{algo.lower()}_sample_efficiency.png"), dpi=300, facecolor="white")
+    plt.close()
+    print(f"  [OK] {algo.lower()}_sample_efficiency.png")
+
+
+def plot_dashboard(df, out, algo="PPO", window=50):
+    """Dashboard 3x3 per presentazione."""
+    fig = plt.figure(figsize=(22, 15))
+    gs = GridSpec(3, 3, figure=fig, hspace=0.38, wspace=0.32)
+    color = C["dqn"] if algo == "DQN" else C["ppo"]
+    episodes = df["episode"].values
+    rewards = df["reward"].values
+
+    # 1. Learning Curve
+    ax = fig.add_subplot(gs[0, :2])
+    mean, lower, upper = ci(rewards, window)
+    ax.fill_between(episodes, lower, upper, alpha=0.15, color=color)
+    ax.plot(episodes, mean, color=color, linewidth=2.5)
+    ax.set_title("Learning Curve (95% CI)", fontweight="bold", fontsize=13)
+    ax.set_xlabel("Episodio")
+    ax.set_ylabel("Reward")
+    ax.grid(True, alpha=0.2)
 
     # 2. Stats
-    ax2 = fig.add_subplot(gs[0, 2])
-    ax2.axis("off")
-    final_mean = np.mean(rewards[-window:]) if len(rewards) >= window else np.mean(rewards)
-    best_reward = np.max(rewards)
-    improvement = ((final_mean - rewards[0]) / abs(rewards[0]) * 100) if rewards[0] != 0 else 0
-
-    stats_lines = [
-        "TRAINING SUMMARY", f"{'='*25}", "", f"Algorithm: {algorithm}", f"Episodes: {len(episodes)}", "",
-        f"Best Reward: {best_reward:.1f}", f"Final Mean: {final_mean:.1f}", f"Improvement: {improvement:+.1f}%"
+    ax = fig.add_subplot(gs[0, 2])
+    ax.axis("off")
+    final = np.mean(rewards[-window:]) if len(rewards) >= window else np.mean(rewards)
+    best = np.max(rewards)
+    wins = int(np.sum(df["mantis_killed"].values >= 3)) if "mantis_killed" in df.columns else 0
+    wr = wins / len(episodes) * 100
+    lines = [
+        f"  {algo} TRAINING SUMMARY", f"  {'─'*28}",
+        f"  Episodi:     {len(episodes)}",
+        f"  Best Reward: {best:.0f}",
+        f"  Media finale:{final:.0f}",
+        f"  Vittorie:    {wins} ({wr:.1f}%)",
     ]
-    if "mantis_killed" in df.columns:
-        wins = np.sum(df["mantis_killed"].values >= 3)
-        win_rate = wins / len(episodes) * 100
-        stats_lines.extend(["", f"Victories: {wins}/{len(episodes)}", f"Win Rate: {win_rate:.1f}%"])
+    ax.text(0.05, 0.92, "\n".join(lines), transform=ax.transAxes, fontsize=12,
+            va="top", fontfamily="monospace",
+            bbox=dict(boxstyle="round,pad=0.5", facecolor="#f8fafc", edgecolor="#e2e8f0"))
 
-    stats_text = "\n".join(stats_lines)
-    ax2.text(0.1, 0.95, stats_text, transform=ax2.transAxes, fontsize=12, verticalalignment="top", fontfamily="monospace",
-             bbox=dict(boxstyle="round", facecolor="#F8F8F8", edgecolor="#CCCCCC", alpha=0.95))
-
-    # 3. Win Rate
-    ax3 = fig.add_subplot(gs[1, 0])
+    # 3. Kill/Win Rate
+    ax = fig.add_subplot(gs[1, 0])
     if "mantis_killed" in df.columns:
         mantis = df["mantis_killed"].values
-        win_rate = compute_win_rate(mantis, window)
-        ax3.plot(episodes, win_rate, color=COLORS["success"], linewidth=2.5)
-        ax3.fill_between(episodes, 0, win_rate, alpha=0.2, color=COLORS["success"])
-        ax3.axhline(y=50, color="#888888", linestyle="--", linewidth=1, alpha=0.5)
-        ax3.set_ylim([-5, 105])
-        ax3.set_ylabel("Win Rate (%)", fontweight="bold")
-    else:
-        smoothed = smooth(rewards, window)
-        ax3.plot(episodes, smoothed, color=color, linewidth=2.5)
-        ax3.set_ylabel("Reward", fontweight="bold")
-    ax3.set_xlabel("Episode", fontweight="bold")
-    ax3.set_title("Victory Rate", fontweight="bold", fontsize=12)
-    ax3.grid(True, alpha=0.3)
+        ax.plot(episodes, smooth(mantis.astype(float), window), color=color, linewidth=2)
+        ax.axhline(y=3, color=C["success"], linestyle="--", linewidth=1, alpha=0.5)
+        ax.set_ylabel("Kill rate")
+    ax.set_title("Kill Rate", fontweight="bold", fontsize=12)
+    ax.grid(True, alpha=0.2)
 
     # 4. Sample Efficiency
-    ax4 = fig.add_subplot(gs[1, 1])
+    ax = fig.add_subplot(gs[1, 1])
     if "steps" in df.columns:
-        steps = df["steps"].values
-        cumulative_steps = np.cumsum(steps)
-        cumulative_reward = np.cumsum(rewards)
-        ax4.plot(cumulative_steps / 1000, cumulative_reward, color=color, linewidth=2.5)
-        ax4.set_xlabel("Steps (thousands)", fontweight="bold")
-    else:
-        ax4.plot(episodes, np.cumsum(rewards), color=color, linewidth=2.5)
-        ax4.set_xlabel("Episode", fontweight="bold")
-    ax4.set_ylabel("Cumulative Reward", fontweight="bold")
-    ax4.set_title("Sample Efficiency", fontweight="bold", fontsize=12)
-    ax4.grid(True, alpha=0.3)
+        cum_s = np.cumsum(df["steps"].values)
+        cum_r = np.cumsum(rewards)
+        ax.plot(cum_s / 1000, cum_r, color=color, linewidth=2)
+        ax.set_xlabel("Steps (k)")
+    ax.set_title("Sample Efficiency", fontweight="bold", fontsize=12)
+    ax.grid(True, alpha=0.2)
 
     # 5. Loss
-    ax5 = fig.add_subplot(gs[1, 2])
-    loss_col = "loss" if "loss" in df.columns else None
-    if loss_col:
-        losses = df[loss_col].values
-        valid = np.isfinite(losses)
-        if np.sum(valid) > 0:
-            ax5.plot(episodes[valid], smooth(losses[valid], 20), color=COLORS["loss"], linewidth=2.5)
-            ax5.set_title("Loss Convergence", fontweight="bold", fontsize=12)
-            ax5.grid(True, alpha=0.3)
+    ax = fig.add_subplot(gs[1, 2])
+    for col in ["loss", "avg_loss"]:
+        if col in df.columns:
+            losses = df[col].values
+            valid = np.isfinite(losses)
+            if np.sum(valid) > 0:
+                ax.plot(episodes[valid], smooth(losses[valid], 20), color=C["loss"], linewidth=2)
+            break
+    ax.set_title("Loss", fontweight="bold", fontsize=12)
+    ax.grid(True, alpha=0.2)
 
-    # 6. Outcome Dist
-    ax6 = fig.add_subplot(gs[2, 0])
+    # 6. Outcome Distribution
+    ax = fig.add_subplot(gs[2, 0])
     if "mantis_killed" in df.columns:
         mantis = df["mantis_killed"].values
-        ax6.set_xticks([0, 1, 2, 3])
-        ax6.set_xticklabels(["0", "1", "2", "3 (Win)"])
-        ax6.set_xlabel("Mantis Lords Defeated", fontweight="bold")
-        ax6.set_ylabel("Episodes", fontweight="bold")
-        ax6.set_title("Outcome Distribution", fontweight="bold", fontsize=12)
-        ax6.grid(True, alpha=0.3, axis="y")
+        counts = [np.sum(mantis == i) for i in range(4)]
+        cols = [C["kill0"], C["kill1"], C["kill2"], C["kill3"]]
+        bars = ax.bar([0, 1, 2, 3], counts, color=cols, alpha=0.75, edgecolor="white")
+        ax.set_xticks([0, 1, 2, 3])
+        ax.set_xticklabels(["0", "1", "2", "3 (W)"])
+        for bar, count in zip(bars, counts):
+            if count > 0:
+                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(counts)*0.01,
+                        str(count), ha="center", fontsize=9, fontweight="bold")
+    ax.set_title("Distribuzione Outcome", fontweight="bold", fontsize=12)
+    ax.grid(True, alpha=0.2, axis="y")
 
     # 7. Exploration
-    ax7 = fig.add_subplot(gs[2, 1])
+    ax = fig.add_subplot(gs[2, 1])
     if "epsilon" in df.columns:
-        ax7.plot(episodes, df["epsilon"].values, color=COLORS["exploration"], linewidth=2.5)
-        ax7.set_ylabel("Epsilon", fontweight="bold")
-        ax7.set_ylim([0, 1.1])
+        ax.plot(episodes, df["epsilon"].values, color=C["explore"], linewidth=2)
+        ax.set_ylabel("Epsilon")
     elif "entropy" in df.columns:
-        ax7.plot(episodes, smooth(df["entropy"].values, 20), color=COLORS["exploration"], linewidth=2.5)
-        ax7.set_ylabel("Entropy", fontweight="bold")
-    ax7.set_title("Exploration Metric", fontweight="bold", fontsize=12)
-    ax7.grid(True, alpha=0.3)
+        ax.plot(episodes, smooth(df["entropy"].values, 20), color=C["explore"], linewidth=2)
+        ax.set_ylabel("Entropy")
+    ax.set_title("Esplorazione", fontweight="bold", fontsize=12)
+    ax.grid(True, alpha=0.2)
 
-    # 8. Reward Dist
-    ax8 = fig.add_subplot(gs[2, 2])
-    ax8.hist(rewards, bins=30, color=color, alpha=0.7, edgecolor="black")
-    ax8.axvline(x=np.mean(rewards), color="red", linestyle="--", linewidth=2, label=f"Mean: {np.mean(rewards):.1f}")
-    ax8.set_title("Reward Distribution", fontweight="bold", fontsize=12)
-    ax8.grid(True, alpha=0.3, axis="y")
+    # 8. Reward Distribution
+    ax = fig.add_subplot(gs[2, 2])
+    ax.hist(rewards, bins=40, color=color, alpha=0.65, edgecolor="white")
+    ax.axvline(x=np.mean(rewards), color=C["loss"], linestyle="--", linewidth=2,
+               label=f"Media: {np.mean(rewards):.0f}")
+    ax.set_title("Distribuzione Reward", fontweight="bold", fontsize=12)
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.2, axis="y")
 
-    plt.suptitle(f"{algorithm} Training Results", fontweight="bold", fontsize=22, y=0.98)
-    plt.tight_layout()
-    output_path = os.path.join(output_dir, f"{algorithm.lower()}_presentation_dashboard.png")
-    plt.savefig(output_path, dpi=300, bbox_inches="tight", facecolor="white")
+    fig.suptitle(f"{algo} — Training Dashboard", fontweight="bold", fontsize=20, y=0.995)
+    plt.savefig(os.path.join(out, f"{algo.lower()}_dashboard.png"), dpi=300, facecolor="white")
     plt.close()
-    print(f"  [OK] {output_path}")
+    print(f"  [OK] {algo.lower()}_dashboard.png")
 
 
-def generate_all_plots(
-    df: pd.DataFrame, output_dir: str, algorithm: str, window: int = 50
-):
-    """Generate all plots for a single algorithm."""
-    print(f"\nGenerating {algorithm} plots...")
+def plot_comparison(df_dqn, df_ppo, out, window=50):
+    """DQN vs PPO side-by-side."""
+    fig, axes = plt.subplots(2, 2, figsize=(18, 12))
 
-    plot_learning_curve(df, output_dir, algorithm, window, show_ci=True)
-    plot_win_rate(df, output_dir, algorithm, window)
-    plot_sample_efficiency(df, output_dir, algorithm, window)
-    plot_loss_analysis(df, output_dir, algorithm, window // 2)
-    plot_exploration_exploitation(df, output_dir, algorithm)
-    plot_mantis_progress(df, output_dir, algorithm, window)
-    plot_presentation_dashboard(df, output_dir, algorithm, window)
+    # Learning curves
+    ax = axes[0, 0]
+    for df, algo, color in [(df_dqn, "DQN", C["dqn"]), (df_ppo, "PPO", C["ppo"])]:
+        ep = df["episode"].values
+        rew = df["reward"].values
+        mean, lower, upper = ci(rew, window)
+        ax.fill_between(ep, lower, upper, alpha=0.12, color=color)
+        ax.plot(ep, mean, color=color, linewidth=2.5, label=algo)
+    ax.set_title("Learning Curve", fontweight="bold", fontsize=13)
+    ax.legend()
+    ax.grid(True, alpha=0.25)
 
+    # Kill rate
+    ax = axes[0, 1]
+    for df, algo, color in [(df_dqn, "DQN", C["dqn"]), (df_ppo, "PPO", C["ppo"])]:
+        if "mantis_killed" in df.columns:
+            ep = df["episode"].values
+            ax.plot(ep, smooth(df["mantis_killed"].values.astype(float), window),
+                    color=color, linewidth=2.5, label=algo)
+    ax.set_title("Kill Rate", fontweight="bold", fontsize=13)
+    ax.legend()
+    ax.grid(True, alpha=0.25)
+
+    # Sample efficiency
+    ax = axes[1, 0]
+    for df, algo, color in [(df_dqn, "DQN", C["dqn"]), (df_ppo, "PPO", C["ppo"])]:
+        if "steps" in df.columns:
+            ax.plot(np.cumsum(df["steps"].values) / 1000, np.cumsum(df["reward"].values),
+                    color=color, linewidth=2.5, label=algo)
+    ax.set_title("Sample Efficiency", fontweight="bold", fontsize=13)
+    ax.set_xlabel("Steps (k)")
+    ax.legend()
+    ax.grid(True, alpha=0.25)
+
+    # Outcome distribution
+    ax = axes[1, 1]
+    x = np.arange(4)
+    w = 0.35
+    for i, (df, algo, color) in enumerate([(df_dqn, "DQN", C["dqn"]), (df_ppo, "PPO", C["ppo"])]):
+        if "mantis_killed" in df.columns:
+            mantis = df["mantis_killed"].values
+            counts = [np.sum(mantis == k) / len(mantis) * 100 for k in range(4)]
+            ax.bar(x + i * w - w / 2, counts, w * 0.9, color=color, alpha=0.7, label=algo)
+    ax.set_xticks(x)
+    ax.set_xticklabels(["0 kill", "1 kill", "2 kill", "3 kill"])
+    ax.set_ylabel("%")
+    ax.set_title("Distribuzione Outcome", fontweight="bold", fontsize=13)
+    ax.legend()
+    ax.grid(True, alpha=0.25, axis="y")
+
+    fig.suptitle("DQN vs PPO — Confronto", fontweight="bold", fontsize=18)
+    plt.tight_layout()
+    plt.savefig(os.path.join(out, "dqn_vs_ppo_comparison.png"), dpi=300, facecolor="white")
+    plt.close()
+    print(f"  [OK] dqn_vs_ppo_comparison.png")
+
+
+# ============================================================================
+# PLAY (INFERENCE) PLOTS
+# ============================================================================
+
+def plot_play_results(df, out):
+    """Genera tutti i grafici dall'output di play.py."""
+    print("\nGenerating PLAY plots...")
+
+    runs = df["run"].values
+    kills = df["mantis_killed"].values
+    boss_hp = df["boss_hp"].values
+    steps = df["steps"].values
+    is_win = (df["result"] == "WIN").values
+    agents = df["agent"].unique() if "agent" in df.columns else ["?"]
+    agent_label = agents[0] if len(agents) == 1 else " + ".join(agents)
+    models = df["model"].unique() if "model" in df.columns else ["?"]
+
+    # ─── 1. Win Rate Cumulativo ───
+    fig, ax = plt.subplots(figsize=(14, 7))
+    cum_wins = np.cumsum(is_win)
+    cum_wr = cum_wins / np.arange(1, len(runs) + 1) * 100
+    ax.plot(runs, cum_wr, color=C["success"], linewidth=2.5)
+    ax.fill_between(runs, 0, cum_wr, alpha=0.12, color=C["success"])
+    ax.axhline(y=50, color=C["muted"], linestyle="--", linewidth=1)
+    ax.set_xlabel("Run")
+    ax.set_ylabel("Win Rate Cumulativo (%)")
+    ax.set_ylim([-2, 105])
+    ax.set_title(f"Inference — Win Rate Cumulativo")
+    add_subtitle(ax, f"{agent_label} · {int(cum_wins[-1])}/{len(runs)} vittorie ({cum_wr[-1]:.1f}%)")
+    ax.grid(True, alpha=0.25)
+    stat_box(ax, [f"Runs: {len(runs)}", f"Vittorie: {int(cum_wins[-1])}",
+                  f"Win Rate: {cum_wr[-1]:.1f}%",
+                  f"Kill medi: {np.mean(kills):.2f}"])
+    plt.tight_layout()
+    plt.savefig(os.path.join(out, "play_win_rate.png"), dpi=300, facecolor="white")
+    plt.close()
+    print(f"  [OK] play_win_rate.png")
+
+    # ─── 2. Kill Distribution ───
+    fig, ax = plt.subplots(figsize=(12, 7))
+    counts = [np.sum(kills == i) for i in range(4)]
+    cols = [C["kill0"], C["kill1"], C["kill2"], C["kill3"]]
+    bars = ax.bar([0, 1, 2, 3], counts, color=cols, alpha=0.8, edgecolor="white", width=0.65)
+    for bar, count in zip(bars, counts):
+        pct = count / len(kills) * 100
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(counts)*0.015,
+                f"{count}\n({pct:.1f}%)", ha="center", fontsize=11, fontweight="bold")
+    ax.set_xticks([0, 1, 2, 3])
+    ax.set_xticklabels(["0 kill\n(sconfitta)", "1 kill", "2 kill", "3 kill\n(vittoria)"])
+    ax.set_ylabel("Numero di run")
+    ax.set_title("Inference — Distribuzione Kill")
+    add_subtitle(ax, f"{len(runs)} run totali")
+    ax.grid(True, alpha=0.2, axis="y")
+    plt.tight_layout()
+    plt.savefig(os.path.join(out, "play_kill_distribution.png"), dpi=300, facecolor="white")
+    plt.close()
+    print(f"  [OK] play_kill_distribution.png")
+
+    # ─── 3. Boss HP Rimanente ───
+    fig, ax = plt.subplots(figsize=(14, 7))
+    loss_hp = boss_hp[~is_win]
+    if len(loss_hp) > 0:
+        ax.hist(loss_hp, bins=30, color=C["loss"], alpha=0.6, edgecolor="white", label="Sconfitte")
+    ax.axvline(x=0, color=C["success"], linewidth=2, linestyle="--", label="Vittoria (HP=0)")
+    ax.set_xlabel("Boss HP rimanente")
+    ax.set_ylabel("Frequenza")
+    ax.set_title("Inference — Boss HP alla Fine")
+    add_subtitle(ax, f"Quanto manca alla vittoria nelle sconfitte")
+    ax.legend()
+    ax.grid(True, alpha=0.25, axis="y")
+    if len(loss_hp) > 0:
+        stat_box(ax, [f"HP medio (sconfitte): {np.mean(loss_hp):.0f}",
+                      f"HP mediano: {np.median(loss_hp):.0f}",
+                      f"Quasi vittorie (HP<100): {np.sum(loss_hp < 100)}"])
+    plt.tight_layout()
+    plt.savefig(os.path.join(out, "play_boss_hp.png"), dpi=300, facecolor="white")
+    plt.close()
+    print(f"  [OK] play_boss_hp.png")
+
+    # ─── 4. Steps Distribution (Win vs Loss) ───
+    fig, ax = plt.subplots(figsize=(14, 7))
+    win_steps = steps[is_win]
+    loss_steps = steps[~is_win]
+    if len(loss_steps) > 0:
+        ax.hist(loss_steps, bins=25, color=C["loss"], alpha=0.5, edgecolor="white", label="Sconfitte")
+    if len(win_steps) > 0:
+        ax.hist(win_steps, bins=25, color=C["success"], alpha=0.6, edgecolor="white", label="Vittorie")
+    ax.set_xlabel("Steps per run")
+    ax.set_ylabel("Frequenza")
+    ax.set_title("Inference — Durata Run")
+    add_subtitle(ax, "Distribuzione steps per vittorie e sconfitte")
+    ax.legend()
+    ax.grid(True, alpha=0.25, axis="y")
+    lines = [f"Steps medio totale: {np.mean(steps):.0f}"]
+    if len(win_steps) > 0:
+        lines.append(f"Steps medio (vitt): {np.mean(win_steps):.0f}")
+        lines.append(f"Più veloce: {np.min(win_steps)}")
+    stat_box(ax, lines)
+    plt.tight_layout()
+    plt.savefig(os.path.join(out, "play_steps_distribution.png"), dpi=300, facecolor="white")
+    plt.close()
+    print(f"  [OK] play_steps_distribution.png")
+
+    # ─── 5. Play Dashboard ───
+    fig = plt.figure(figsize=(18, 10))
+    gs = GridSpec(2, 3, figure=fig, hspace=0.35, wspace=0.3)
+
+    # Win rate cumulativo
+    ax = fig.add_subplot(gs[0, 0])
+    ax.plot(runs, cum_wr, color=C["success"], linewidth=2)
+    ax.fill_between(runs, 0, cum_wr, alpha=0.1, color=C["success"])
+    ax.axhline(y=50, color=C["muted"], linestyle="--", linewidth=0.8)
+    ax.set_title("Win Rate Cumulativo", fontweight="bold", fontsize=12)
+    ax.set_ylim([-2, 105])
+    ax.grid(True, alpha=0.2)
+
+    # Kill distribution
+    ax = fig.add_subplot(gs[0, 1])
+    ax.bar([0, 1, 2, 3], counts, color=cols, alpha=0.8, edgecolor="white")
+    ax.set_xticks([0, 1, 2, 3])
+    ax.set_xticklabels(["0", "1", "2", "3(W)"])
+    ax.set_title("Kill Distribution", fontweight="bold", fontsize=12)
+    ax.grid(True, alpha=0.2, axis="y")
+
+    # Stats
+    ax = fig.add_subplot(gs[0, 2])
+    ax.axis("off")
+    total_w = int(cum_wins[-1])
+    slines = [
+        f"  INFERENCE SUMMARY", f"  {'─'*26}",
+        f"  Agente:   {agent_label}",
+        f"  Modello:  {models[0] if len(models)==1 else 'multi'}",
+        f"  Run:      {len(runs)}",
+        f"  Vittorie: {total_w} ({cum_wr[-1]:.1f}%)",
+        f"  Kill medi:{np.mean(kills):.2f}",
+    ]
+    if len(win_steps) > 0:
+        slines.append(f"  Best run: {np.min(win_steps)} steps")
+    ax.text(0.05, 0.92, "\n".join(slines), transform=ax.transAxes, fontsize=12,
+            va="top", fontfamily="monospace",
+            bbox=dict(boxstyle="round,pad=0.5", facecolor="#f8fafc", edgecolor="#e2e8f0"))
+
+    # Boss HP
+    ax = fig.add_subplot(gs[1, 0])
+    if len(loss_hp) > 0:
+        ax.hist(loss_hp, bins=20, color=C["loss"], alpha=0.6, edgecolor="white")
+    ax.set_title("Boss HP (sconfitte)", fontweight="bold", fontsize=12)
+    ax.grid(True, alpha=0.2, axis="y")
+
+    # Steps win vs loss
+    ax = fig.add_subplot(gs[1, 1])
+    if len(loss_steps) > 0:
+        ax.hist(loss_steps, bins=20, color=C["loss"], alpha=0.5, edgecolor="white", label="Loss")
+    if len(win_steps) > 0:
+        ax.hist(win_steps, bins=20, color=C["success"], alpha=0.6, edgecolor="white", label="Win")
+    ax.set_title("Steps (Win vs Loss)", fontweight="bold", fontsize=12)
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.2, axis="y")
+
+    # Kill per run (scatter)
+    ax = fig.add_subplot(gs[1, 2])
+    scatter_colors = [cols[min(k, 3)] for k in kills]
+    ax.scatter(runs, kills, c=scatter_colors, alpha=0.6, s=25, edgecolors="white", linewidth=0.3)
+    ax.plot(runs, smooth(kills.astype(float), max(5, len(runs)//10)), color=C["text"],
+            linewidth=2, alpha=0.7)
+    ax.set_yticks([0, 1, 2, 3])
+    ax.set_title("Kill per Run", fontweight="bold", fontsize=12)
+    ax.grid(True, alpha=0.2)
+
+    fig.suptitle(f"Inference Dashboard — {agent_label}", fontweight="bold", fontsize=18, y=0.995)
+    plt.savefig(os.path.join(out, "play_dashboard.png"), dpi=300, facecolor="white")
+    plt.close()
+    print(f"  [OK] play_dashboard.png")
+
+    # ─── 6. Multi-agent comparison (se ci sono sia PPO che DQN) ───
+    if "agent" in df.columns and len(agents) > 1:
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
+        for agent_name in agents:
+            adf = df[df["agent"] == agent_name]
+            a_wins = (adf["result"] == "WIN").values
+            a_cum_wr = np.cumsum(a_wins) / np.arange(1, len(a_wins) + 1) * 100
+            color = C["ppo"] if "PPO" in agent_name.upper() else C["dqn"]
+            ax1.plot(range(1, len(a_wins) + 1), a_cum_wr, color=color, linewidth=2.5, label=agent_name)
+
+        ax1.set_title("Win Rate per Agente", fontweight="bold", fontsize=13)
+        ax1.set_xlabel("Run")
+        ax1.set_ylabel("Win Rate (%)")
+        ax1.legend()
+        ax1.grid(True, alpha=0.25)
+
+        x = np.arange(4)
+        w = 0.35
+        for i, agent_name in enumerate(agents):
+            adf = df[df["agent"] == agent_name]
+            ak = adf["mantis_killed"].values
+            acounts = [np.sum(ak == k) / len(ak) * 100 for k in range(4)]
+            color = C["ppo"] if "PPO" in agent_name.upper() else C["dqn"]
+            ax2.bar(x + i * w - w / 2, acounts, w * 0.9, color=color, alpha=0.7, label=agent_name)
+
+        ax2.set_xticks(x)
+        ax2.set_xticklabels(["0 kill", "1 kill", "2 kill", "3 kill"])
+        ax2.set_ylabel("%")
+        ax2.set_title("Kill Distribution per Agente", fontweight="bold", fontsize=13)
+        ax2.legend()
+        ax2.grid(True, alpha=0.25, axis="y")
+
+        fig.suptitle("PPO vs DQN — Inference Comparison", fontweight="bold", fontsize=16)
+        plt.tight_layout()
+        plt.savefig(os.path.join(out, "play_agent_comparison.png"), dpi=300, facecolor="white")
+        plt.close()
+        print(f"  [OK] play_agent_comparison.png")
+
+
+# ============================================================================
+# GENERATION ENTRY POINTS
+# ============================================================================
+
+def generate_all_training(df, out, algo, window=50):
+    print(f"\nGenerating {algo} training plots...")
+    plot_learning_curve(df, out, algo, window)
+    plot_kill_and_win_rate(df, out, algo, window)
+    plot_cross_iteration(df, out, algo)
+    plot_per_instance(df, out, algo, window)
+    plot_exploration(df, out, algo)
+    plot_outcome_evolution(df, out, algo)
+    plot_loss(df, out, algo, window // 2)
+    plot_sample_efficiency(df, out, algo, window)
+    plot_dashboard(df, out, algo, window)
+
+
+# ============================================================================
+# CLI
+# ============================================================================
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", type=str, required=True, choices=["dqn", "ppo", "compare", "multi", "presentation"])
+    parser = argparse.ArgumentParser(
+        description="Genera grafici per training e inference",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Esempi:
+  python generate_plots.py --mode ppo --ppo-log training_log_ppo.csv
+  python generate_plots.py --mode dqn --dqn-log training_log_dqn.csv
+  python generate_plots.py --mode compare --dqn-log dqn.csv --ppo-log ppo.csv
+  python generate_plots.py --mode multi --multi-log training_log_ppo.csv
+  python generate_plots.py --mode play --play-log play_log.csv
+  python generate_plots.py --mode presentation --ppo-log ppo.csv
+        """)
+
+    parser.add_argument("--mode", type=str, required=True,
+                        choices=["dqn", "ppo", "compare", "multi", "play", "presentation"])
     parser.add_argument("--dqn-log", type=str)
     parser.add_argument("--ppo-log", type=str)
     parser.add_argument("--multi-log", type=str)
+    parser.add_argument("--play-log", type=str)
     parser.add_argument("--output", type=str, default="plots")
     parser.add_argument("--window", type=int, default=50)
 
     args = parser.parse_args()
     os.makedirs(args.output, exist_ok=True)
 
-    print("\n" + "=" * 60)
-    print("PROFESSIONAL TRAINING VISUALIZATION")
-    print("=" * 60)
+    print(f"\n{'═'*60}")
+    print(f"  TRAINING & INFERENCE VISUALIZATION")
+    print(f"  Output: {args.output}/")
+    print(f"{'═'*60}")
 
     if args.mode == "dqn":
         df = load_log(args.dqn_log)
-        print(f"Loaded: {len(df)} episodes")
-        generate_all_plots(df, args.output, "DQN", args.window)
+        print(f"  Loaded: {len(df)} episodes (DQN)")
+        generate_all_training(df, args.output, "DQN", args.window)
 
     elif args.mode == "ppo":
         df = load_log(args.ppo_log)
-        print(f"Loaded: {len(df)} episodes")
-        generate_all_plots(df, args.output, "PPO", args.window)
+        print(f"  Loaded: {len(df)} episodes (PPO)")
+        generate_all_training(df, args.output, "PPO", args.window)
+
+    elif args.mode == "compare":
+        if args.dqn_log and args.ppo_log:
+            df_dqn = load_log(args.dqn_log)
+            df_ppo = load_log(args.ppo_log)
+            print(f"  DQN: {len(df_dqn)} eps | PPO: {len(df_ppo)} eps")
+            plot_comparison(df_dqn, df_ppo, args.output, args.window)
+            plot_dashboard(df_dqn, args.output, "DQN", args.window)
+            plot_dashboard(df_ppo, args.output, "PPO", args.window)
 
     elif args.mode == "multi":
         df = load_log(args.multi_log)
-        algorithm = get_algorithm_from_log(df)
-        print(f"Loaded: {len(df)} total entries")
-        plot_multi_instance(df, args.output, args.window)
-        plot_presentation_dashboard(df, args.output, algorithm, args.window)
+        algo = get_algo(df)
+        print(f"  Loaded: {len(df)} entries ({algo})")
+        plot_per_instance(df, args.output, algo, args.window)
+        plot_dashboard(df, args.output, algo, args.window)
+
+    elif args.mode == "play":
+        if not args.play_log:
+            print("  [ERRORE] Serve --play-log per la modalità play")
+            return
+        df = load_play_log(args.play_log)
+        print(f"  Loaded: {len(df)} run")
+        plot_play_results(df, args.output)
 
     elif args.mode == "presentation":
         if args.dqn_log:
             df = load_log(args.dqn_log)
-            print(f"DQN: {len(df)} episodes")
-            plot_presentation_dashboard(df, args.output, "DQN", args.window)
+            print(f"  DQN: {len(df)} episodes")
+            plot_dashboard(df, args.output, "DQN", args.window)
         if args.ppo_log:
             df = load_log(args.ppo_log)
-            print(f"PPO: {len(df)} episodes")
-            plot_presentation_dashboard(df, args.output, "PPO", args.window)
+            print(f"  PPO: {len(df)} episodes")
+            plot_dashboard(df, args.output, "PPO", args.window)
 
-    elif args.mode == "compare":
-        # Missing block for compare mode added here
-        if args.dqn_log and args.ppo_log:
-             df_dqn = load_log(args.dqn_log)
-             df_ppo = load_log(args.ppo_log)
-             # plot_comparison functions... (not fully defined in snippet but main handles logic)
-             # For safety, let's just generate dashboards
-             plot_presentation_dashboard(df_dqn, args.output, "DQN", args.window)
-             plot_presentation_dashboard(df_ppo, args.output, "PPO", args.window)
+    print(f"\n{'═'*60}")
+    print(f"  Tutti i grafici salvati in: {args.output}/")
+    print(f"{'═'*60}\n")
 
-    print("\n" + "=" * 60)
-    print(f"All plots saved to: {args.output}")
 
 if __name__ == "__main__":
     main()

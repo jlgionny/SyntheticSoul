@@ -350,10 +350,10 @@ PHASE_CONFIGS = {
         "name": "DUAL MANTIS",
         "description": "Handle two mantises at once",
         "episodes": 2000,
-        "lr": 8e-5,                      # MODIFICA: warm restart (era 1e-4, decayed a 2e-5)
+        "lr": 5e-5,                      # MODIFICA: warm restart (era 1e-4, decayed a 2e-5)
         "lr_end_factor": 0.25,           # MODIFICA: decay meno aggressivo (era 0.2)
-        "entropy_start": 0.05,           # MODIFICA: warm restart esplorazione (era 0.06→0.01)
-        "entropy_end": 0.008,            # MODIFICA: minimo leggermente più alto (era 0.01)
+        "entropy_start": 0.03,           # MODIFICA: warm restart esplorazione (era 0.06→0.01)
+        "entropy_end": 0.005,            # MODIFICA: minimo leggermente più alto (era 0.01)
         "gae_lambda": 0.95,
         "n_epochs": 4,
         "batch_size": 64,
