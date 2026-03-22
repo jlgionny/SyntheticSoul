@@ -3,16 +3,14 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using Newtonsoft.Json;
+using HutongGames.PlayMaker;
 
 namespace SyntheticSoulMod
 {
-    /// <summary>
-    /// Classe per rappresentare lo stato del gioco da inviare al Python agent.
-    /// </summary>
     [Serializable]
     public class GameState
     {
-        // PLAYER STATE
+        // ═══════ PLAYER ═══════
         public float playerX;
         public float playerY;
         public float playerVelocityX;
@@ -25,120 +23,158 @@ namespace SyntheticSoulMod
         public bool hasDoubleJump;
         public bool isDead;
         public bool facingRight;
-
-        // DAMAGE ACCUMULATOR
         public int damageTaken;
-
-        // TERRAIN INFO
-        // 0: Floor Distance (sotto)
-        // 1: Gap Ahead (avanti-basso)
-        // 2: Wall Ahead (avanti)
-        // 3: Ceiling Ahead (avanti-alto)
-        // 4: Ceiling Distance (sopra)
         public float[] terrainInfo;
+        public int lastHazardType;
 
-        // BOSS STATE (ENHANCED)
+        // ═══════ BOSS (target attivo — THREAT LOCKED) ═══════
+        // Questi campi puntano SEMPRE alla mantide più pericolosa,
+        // non alla più vicina o alla più bassa. In fase 2 se una
+        // mantide ti dasha addosso, questi campi trackano LEI.
         public float bossX;
         public float bossY;
+        public float bossVelocityX;
+        public float bossVelocityY;
         public float bossHealth;
         public float distanceToBoss;
         public float bossRelativeX;
         public float bossRelativeY;
         public bool isFacingBoss;
         public bool bossDefeated;
-
-        // MANTIS LORDS TRACKING
         public int mantisLordsKilled;
 
-        // HAZARDS (Projectiles, Enemies, Spikes)
+        // Boss Intent legacy — con PRIORITÀ: Drop(2) > Dash(1) > Throw(3) > Idle(0)
+        // Scansiona TUTTE le mantidi e riporta l'attacco più pericoloso in corso.
+        public int bossAction;
+
+        // ═══════ HAZARDS ═══════
         public List<HazardInfo> nearbyHazards;
+
+        // ═══════ ATTACK PATTERN DETECTION ═══════
+        // Pattern mantide primaria (la PIÙ PERICOLOSA, stessa della threat lock)
+        // 0=IDLE, 1=DASH_HORIZONTAL, 2=DASH_DIAGONAL, 3=DAGGER_THROW,
+        // 4=WALL_ATTACK, 5=PLUNGE_ATTACK, 6=WIND_UP, 7=RECOVERING
+        public int primaryMantisPattern;
+        public float primaryMantisVelX;
+        public float primaryMantisVelY;
+        public float primaryMantisAttackDuration;
+        public bool primaryMantisWindUp;
+        public bool primaryMantisActive;
+        public bool primaryMantisRecovering;
+
+        // Pattern mantide secondaria (fase 2, la seconda per pericolosità)
+        public int secondaryMantisPattern;
+        public float secondaryMantisVelX;
+        public float secondaryMantisVelY;
+        public float secondaryMantisRelX;
+        public float secondaryMantisRelY;
+        public bool secondaryMantisActive;
+
+        // Info globali combattimento
+        public int activeMantisCount;
+        public bool anyMantisAttacking;
+
+        // ═══════ VICTORY TRACKER ═══════
+        public int sessionWins;
+        public int currentStreak;
+        public float winRate;
 
         public GameState()
         {
             terrainInfo = new float[5];
             nearbyHazards = new List<HazardInfo>();
             damageTaken = 0;
+            lastHazardType = 1;
             mantisLordsKilled = 0;
+            bossAction = 0;
+            primaryMantisPattern = 0;
+            secondaryMantisPattern = 0;
+            activeMantisCount = 0;
+            anyMantisAttacking = false;
+            sessionWins = 0;
+            currentStreak = 0;
+            winRate = 0f;
         }
     }
 
     [Serializable]
     public class HazardInfo
     {
-        public string type; // "projectile", "enemy", "hazard", "spikes", "boomerang"
+        public string type;
         public float relX;
         public float relY;
         public float velocityX;
         public float velocityY;
-        public float distance; // Distanza dal player
+        public float distance;
     }
 
-    /// <summary>
-    /// Estrae lo stato completo del gioco per l'agente RL.
-    /// </summary>
     public class GameStateExtractor
     {
-        private const float RAYCAST_DISTANCE = 20f;
-        private const float HAZARD_DETECTION_RADIUS = 15f;
+        private const float HAZARD_DETECTION_RADIUS = 25f;
         private const int MAX_HAZARDS = 3;
 
         private LayerMask terrainLayer;
-        private LayerMask enemyLayer;
-        private LayerMask hazardLayer; // Include sia Terrain che Hazards
+        private LayerMask hazardLayer;
 
-        // NUOVO: Traccia il numero di Mantis Lords uccise (per loggare solo i cambiamenti)
         private int prevMantisLordsKilled = 0;
+        private float lastKnownBossHealth = 400f;
+
+        // Kill tracking fase 2
+        private bool phase2Detected = false;
+        private float lastKnownS1Hp = -1f;
+        private float lastKnownS2Hp = -1f;
+        private int confirmedPhase2Kills = 0;
+
+        // Attack Detector
+        private MantisAttackDetector attackDetector;
+
+        // Risultato dell'ultimo ExtractAttackPatterns, usato da ExtractBossState
+        // per fare threat lock coerente tra campi legacy e V2
+        private MantisAttackDetector.MantisAttackInfo lastPrimaryThreat = null;
 
         public GameStateExtractor()
         {
             terrainLayer = LayerMask.GetMask("Terrain");
-            enemyLayer = LayerMask.GetMask("Enemies");
             hazardLayer = LayerMask.GetMask("Terrain", "Hazards");
-
-            DesktopLogger.Log($"[Extractor] Initialized with layers - Terrain: {terrainLayer.value}, Hazards: {hazardLayer.value}");
+            attackDetector = new MantisAttackDetector();
         }
 
-        /// <summary>
-        /// NUOVO: Resetta il tracking per un nuovo episodio.
-        /// </summary>
         public void ResetTracking()
         {
             prevMantisLordsKilled = 0;
-            DesktopLogger.Log("[Extractor] Mantis Lords tracking reset");
+            lastKnownBossHealth = 400f;
+            phase2Detected = false;
+            lastKnownS1Hp = -1f;
+            lastKnownS2Hp = -1f;
+            confirmedPhase2Kills = 0;
+            lastPrimaryThreat = null;
+            attackDetector?.Reset();
+            DesktopLogger.Log("[Extractor] Tracking reset");
         }
 
-        /// <summary>
-        /// Estrae lo stato completo del gioco.
-        /// </summary>
         public GameState ExtractState()
         {
             var state = new GameState();
             var hero = HeroController.instance;
+            if (hero == null) return GetDefaultState();
 
-            if (hero == null)
-            {
-                DesktopLogger.LogWarning("HeroController is null!");
-                return GetDefaultState();
-            }
-
-            // PLAYER STATE
             ExtractPlayerState(hero, state);
-
-            // TERRAIN INFO (with Hazards/Spikes)
             ExtractTerrainInfo(hero, state);
 
-            // BOSS STATE (ENHANCED)
+            // ORDINE CRITICO: Pattern PRIMA di BossState.
+            // ExtractAttackPatterns popola lastPrimaryThreat,
+            // ExtractBossState lo usa per il threat lock.
+            ExtractAttackPatterns(hero, state);
             ExtractBossState(hero, state);
 
-            // HAZARDS (Projectiles, Boomerangs, Spikes)
             ExtractHazards(hero, state);
 
             return state;
         }
 
-        /// <summary>
-        /// Estrae lo stato del player.
-        /// </summary>
+        // ═══════════════════════════════════════════════════════
+        // PLAYER
+        // ═══════════════════════════════════════════════════════
         private void ExtractPlayerState(HeroController hero, GameState state)
         {
             var pos = hero.transform.position;
@@ -161,71 +197,133 @@ namespace SyntheticSoulMod
                 state.hasDoubleJump = pd.hasDoubleJump;
             }
 
-            state.canDash = !hero.cState.dashing && !hero.cState.backDashing && !hero.cState.shadowDashing && !hero.cState.dashCooldown;
-            state.canAttack = !hero.cState.attacking && !hero.cState.recoiling && !hero.cState.dead && !hero.cState.hazardRespawning;
+            state.canDash = !hero.cState.dashing && !hero.cState.backDashing &&
+                            !hero.cState.shadowDashing && !hero.cState.dashCooldown;
+            state.canAttack = !hero.cState.attacking && !hero.cState.recoiling && !hero.cState.dead;
             state.isGrounded = hero.cState.onGround;
             state.isDead = hero.cState.dead;
             state.facingRight = hero.cState.facingRight;
         }
 
-        /// <summary>
-        /// Estrae informazioni sul terreno E hazards fissi (spikes) usando raycasts.
-        /// </summary>
+        // ═══════════════════════════════════════════════════════
+        // TERRAIN
+        // ═══════════════════════════════════════════════════════
         private void ExtractTerrainInfo(HeroController hero, GameState state)
         {
-            var pos = hero.transform.position;
-            bool facingRight = hero.cState.facingRight;
-            float direction = facingRight ? 1f : -1f;
+            Vector2 playerPos = hero.transform.position;
+            Vector2 rayOrigin = new Vector2(playerPos.x, playerPos.y + 0.5f);
 
-            // 0: Floor Distance (sotto) - usa hazardLayer per rilevare anche spikes
-            state.terrainInfo[0] = RaycastDistance(pos, Vector2.down, RAYCAST_DISTANCE, hazardLayer);
+            RaycastHit2D groundHit = Physics2D.Raycast(rayOrigin, Vector2.down, 5f, terrainLayer);
+            state.terrainInfo[0] = (groundHit.collider != null) ? Mathf.Clamp01(groundHit.distance / 3f) : 1.0f;
 
-            // 1: Gap Ahead (avanti-basso, diagonale 45°)
-            Vector2 gapDir = new Vector2(direction, -1f).normalized;
-            state.terrainInfo[1] = RaycastDistance(pos, gapDir, RAYCAST_DISTANCE, hazardLayer);
+            RaycastHit2D ceilingHit = Physics2D.Raycast(rayOrigin, Vector2.up, 5f, terrainLayer);
+            state.terrainInfo[1] = (ceilingHit.collider != null) ? Mathf.Clamp01(ceilingHit.distance / 3f) : 1.0f;
 
-            // 2: Wall Ahead (avanti, orizzontale) - include spike walls
-            Vector2 wallDir = new Vector2(direction, 0f);
-            state.terrainInfo[2] = RaycastDistance(pos, wallDir, RAYCAST_DISTANCE, hazardLayer);
+            Vector2 forward = hero.cState.facingRight ? Vector2.right : Vector2.left;
+            Vector2 backward = hero.cState.facingRight ? Vector2.left : Vector2.right;
 
-            // 3: Ceiling Ahead (avanti-alto, diagonale 45°)
-            Vector2 ceilingAheadDir = new Vector2(direction, 1f).normalized;
-            state.terrainInfo[3] = RaycastDistance(pos, ceilingAheadDir, RAYCAST_DISTANCE, hazardLayer);
+            RaycastHit2D wallHit = Physics2D.Raycast(rayOrigin, forward, 5f, terrainLayer);
+            state.terrainInfo[2] = (wallHit.collider != null) ? Mathf.Clamp01(wallHit.distance / 3f) : 1.0f;
 
-            // 4: Ceiling Distance (sopra)
-            state.terrainInfo[4] = RaycastDistance(pos, Vector2.up, RAYCAST_DISTANCE, hazardLayer);
+            RaycastHit2D wallBackHit = Physics2D.Raycast(rayOrigin, backward, 5f, terrainLayer);
+            state.terrainInfo[3] = (wallBackHit.collider != null) ? Mathf.Clamp01(wallBackHit.distance / 3f) : 1.0f;
 
-            // Normalizza distanze (0 = molto vicino, 1 = molto lontano)
-            for (int i = 0; i < state.terrainInfo.Length; i++)
-            {
-                state.terrainInfo[i] = Mathf.Clamp01(state.terrainInfo[i] / RAYCAST_DISTANCE);
-            }
+            Vector2 diagDir = new Vector2(forward.x, -1f).normalized;
+            RaycastHit2D diagHit = Physics2D.Raycast(rayOrigin, diagDir, 5f, terrainLayer);
+            state.terrainInfo[4] = (diagHit.collider != null) ? Mathf.Clamp01(diagHit.distance / 3f) : 1.0f;
         }
 
-        /// <summary>
-        /// Esegue un raycast e restituisce la distanza all'ostacolo.
-        /// </summary>
-        private float RaycastDistance(Vector2 origin, Vector2 direction, float maxDistance, LayerMask layer)
-        {
-            RaycastHit2D hit = Physics2D.Raycast(origin, direction, maxDistance, layer);
-            if (hit.collider != null)
-            {
-                return hit.distance;
-            }
-            return maxDistance;
-        }
-
-        /// <summary>
-        /// Estrae informazioni sul boss con ENHANCED DIRECTIONAL AWARENESS e Mantis Lords Tracking.
-        /// </summary>
+        // ═══════════════════════════════════════════════════════
+        // BOSS STATE — THREAT LOCKED
+        //
+        // Logica (ripristinata dal vecchio codice + integrata col detector):
+        //
+        // 1. Calcola vita/kills come prima
+        // 2. Se il detector ha trovato una primary threat (chi sta attaccando),
+        //    LOCKA bossRelativeX/Y/distanceToBoss SU DI LEI
+        // 3. Se nessuna sta attaccando, usa FindActiveMantisLord (gerarchia fase1→2)
+        // 4. bossAction = intent più pericoloso tra TUTTE le mantidi (PrioritizeIntent)
+        //
+        // RISULTATO: i campi legacy (features 12-19 nel preprocessor) e i campi V2
+        // (features 34-50) puntano alla STESSA mantide = informazione coerente.
+        // ═══════════════════════════════════════════════════════
         private void ExtractBossState(HeroController hero, GameState state)
         {
-            GameObject boss = FindBoss();
+            // ─── 1. VITA E KILLS ───
+            float totalHealth = CalculateTotalMantisHealth();
 
-            if (boss != null)
+            if (totalHealth > 0)
             {
-                var bossPos = boss.transform.position;
-                var playerPos = hero.transform.position;
+                state.bossHealth = totalHealth;
+                state.bossDefeated = false;
+                lastKnownBossHealth = totalHealth;
+            }
+            else
+            {
+                if (CountDeadMantisLords() >= 3)
+                {
+                    state.bossHealth = 0;
+                    state.bossDefeated = true;
+                }
+                else
+                {
+                    state.bossHealth = lastKnownBossHealth;
+                }
+            }
+
+            state.mantisLordsKilled = CountDeadMantisLords();
+
+            // ─── 2. THREAT SCAN: bossAction = intent più pericoloso globale ───
+            // Scansiona TUTTE le mantidi attive e prende l'intent con priorità
+            // più alta: Drop(2) > Dash(1) > Throw(3) > Idle(0)
+            int highestPriorityIntent = 0;
+            string[] lords = { "Mantis Lord", "Mantis Lord S1", "Mantis Lord S2" };
+
+            foreach (var name in lords)
+            {
+                var obj = GameObject.Find(name);
+                if (obj != null && obj.activeSelf)
+                {
+                    var hm = obj.GetComponent<HealthManager>();
+                    if (hm != null && hm.hp > 0)
+                    {
+                        int intent = GetBossIntent(obj);
+                        if (intent != 0)
+                        {
+                            highestPriorityIntent = PrioritizeIntent(highestPriorityIntent, intent);
+                        }
+                    }
+                }
+            }
+            state.bossAction = highestPriorityIntent;
+
+            // ─── 3. TARGET SELECTION — THREAT LOCK ───
+            // Priorità: detector primary threat > mantide che sta attaccando > fallback gerarchico
+            GameObject activeBoss = null;
+            Vector3 playerPos = hero.transform.position;
+
+            // 3a. Se il detector ha trovato una mantide pericolosa (sta attaccando o wind-up),
+            //     usa LEI come target. Così campi legacy e V2 sono coerenti.
+            if (lastPrimaryThreat != null && lastPrimaryThreat.isAlive &&
+                (lastPrimaryThreat.isActiveAttack || lastPrimaryThreat.isWindingUp))
+            {
+                var threatObj = GameObject.Find(lastPrimaryThreat.name);
+                if (threatObj != null && threatObj.activeSelf)
+                {
+                    activeBoss = threatObj;
+                }
+            }
+
+            // 3b. Fallback: usa la gerarchia fase1→fase2
+            if (activeBoss == null)
+            {
+                activeBoss = FindActiveMantisLord(playerPos);
+            }
+
+            // ─── 4. POPOLA CAMPI BOSS ───
+            if (activeBoss != null)
+            {
+                var bossPos = activeBoss.transform.position;
 
                 state.bossX = bossPos.x;
                 state.bossY = bossPos.y;
@@ -233,334 +331,380 @@ namespace SyntheticSoulMod
                 float dx = bossPos.x - playerPos.x;
                 float dy = bossPos.y - playerPos.y;
                 state.distanceToBoss = Mathf.Sqrt(dx * dx + dy * dy);
+                state.bossRelativeX = Mathf.Clamp(dx / 40.0f, -1.0f, 1.0f);
+                state.bossRelativeY = Mathf.Clamp(dy / 30.0f, -1.0f, 1.0f);
+                state.isFacingBoss = (state.bossRelativeX > 0 && state.facingRight) ||
+                                     (state.bossRelativeX < 0 && !state.facingRight);
 
-                state.bossRelativeX = dx / 20.0f;
-                state.bossRelativeY = dy / 20.0f;
-
-                bool facingBoss = (dx > 0 && hero.cState.facingRight) || (dx < 0 && !hero.cState.facingRight);
-                state.isFacingBoss = facingBoss;
-
-                var hm = boss.GetComponent<HealthManager>();
-                if (hm != null)
+                // Velocità del boss target
+                var rb = activeBoss.GetComponent<Rigidbody2D>();
+                if (rb != null)
                 {
-                    state.bossHealth = hm.hp;
-                    state.bossDefeated = hm.hp <= 0;
+                    state.bossVelocityX = rb.velocity.x;
+                    state.bossVelocityY = rb.velocity.y;
                 }
-                else
+
+                // Se il threat scan non ha trovato niente, usa l'intent di questa specifica mantide
+                if (state.bossAction == 0)
                 {
-                    state.bossHealth = 0f;
-                    state.bossDefeated = false;
+                    state.bossAction = GetBossIntent(activeBoss);
                 }
             }
             else
             {
-                state.bossX = 0f;
-                state.bossY = 0f;
-                state.bossHealth = 0f;
                 state.distanceToBoss = 100f;
-                state.bossRelativeX = 0f;
-                state.bossRelativeY = 0f;
-                state.isFacingBoss = false;
-                state.bossDefeated = false;
-            }
-
-            // TRACKING MANTIS LORDS (OTTIMIZZATO)
-            // TRACKING MANTIS LORDS (FIXED)
-            string[] mantisLordNames = new string[]
-            {
-                "Mantis Lord",      // Prima (Mantis Lord centrale)
-                "Mantis Lord S1",   // Seconda (sinistra)
-                "Mantis Lord S2"    // Terza (destra)
-            };
-
-            int killedCount = 0;
-            foreach (string lordName in mantisLordNames)
-            {
-                GameObject lord = GameObject.Find(lordName);
-                if (lord != null)
-                {
-                    var hm = lord.GetComponent<HealthManager>();
-                    // Conta come uccisa SOLO se esiste ed è morta (hp <= 0)
-                    if (hm != null && hm.hp <= 0)
-                    {
-                        killedCount++;
-                    }
-                }
-            }
-
-            state.mantisLordsKilled = killedCount;
-
-
-            // LOGGA SOLO QUANDO IL NUMERO CAMBIA
-            if (killedCount != prevMantisLordsKilled)
-            {
-                DesktopLogger.Log($"[Mantis Lords] Progress: {killedCount}/3 defeated (previous: {prevMantisLordsKilled})");
-                prevMantisLordsKilled = killedCount;
+                state.bossAction = 0;
+                state.bossX = 0;
+                state.bossY = 0;
             }
         }
 
-        /// <summary>
-        /// Trova il GameObject del boss nella scena.
-        /// </summary>
-        private GameObject FindBoss()
+        // ═══════════════════════════════════════════════════════
+        // ATTACK PATTERN DETECTION
+        // Popola i campi primaryMantis* e secondaryMantis*
+        // E salva lastPrimaryThreat per il threat lock in ExtractBossState.
+        // ═══════════════════════════════════════════════════════
+        private void ExtractAttackPatterns(HeroController hero, GameState state)
         {
-            string[] bossNames = new string[]
-            {
-                "Hornet Boss", "Hornet",
-                "Mantis Lord",
-                "False Knight",
-                "Mawlek Body",
-                "Mega Zombie Beam Miner (1)", "Zombie Beam Miner Rematch",
-                "Mage Knight", "Dream Mage",
-                "Ghost Warrior Hu", "Ghost Warrior Galien", "Ghost Warrior Marmu",
-                "Ghost Warrior Xero", "Ghost Warrior Markoth", "Ghost Warrior No Eyes", "Ghost Warrior Gorb",
-                "Jar Collector",
-                "Dung Defender", "White Defender",
-                "Lost Kin", "Infected Knight",
-                "Mantis Traitor Lord",
-                "Hive Knight"
-            };
+            lastPrimaryThreat = null;  // Reset ogni frame
 
-            foreach (string name in bossNames)
+            if (attackDetector == null) return;
+
+            Vector3 playerPos = hero.transform.position;
+            var allPatterns = attackDetector.DetectAllPatterns(playerPos);
+
+            int activeCount = 0;
+            bool anyAttacking = false;
+
+            MantisAttackDetector.MantisAttackInfo primary = null;
+            MantisAttackDetector.MantisAttackInfo secondary = null;
+
+            // Ordina per pericolosità: active attack > wind-up > qualsiasi pattern > idle
+            // A parità, la più vicina vince
+            allPatterns.Sort((a, b) =>
             {
-                GameObject boss = GameObject.Find(name);
-                if (boss != null && boss.activeInHierarchy)
+                if (!a.isAlive && b.isAlive) return 1;
+                if (a.isAlive && !b.isAlive) return -1;
+                int scoreA = a.isActiveAttack ? 3 : (a.isWindingUp ? 2 : (a.attackPattern > 0 ? 1 : 0));
+                int scoreB = b.isActiveAttack ? 3 : (b.isWindingUp ? 2 : (b.attackPattern > 0 ? 1 : 0));
+                if (scoreA != scoreB) return scoreB.CompareTo(scoreA);
+                return a.distanceToPlayer.CompareTo(b.distanceToPlayer);
+            });
+
+            foreach (var info in allPatterns)
+            {
+                if (!info.isAlive) continue;
+                activeCount++;
+                if (info.isActiveAttack || info.isWindingUp) anyAttacking = true;
+
+                if (primary == null) primary = info;
+                else if (secondary == null) secondary = info;
+            }
+
+            state.activeMantisCount = activeCount;
+            state.anyMantisAttacking = anyAttacking;
+
+            if (primary != null)
+            {
+                state.primaryMantisPattern = primary.attackPattern;
+                state.primaryMantisVelX = primary.velocityX;
+                state.primaryMantisVelY = primary.velocityY;
+                state.primaryMantisAttackDuration = primary.attackDuration;
+                state.primaryMantisWindUp = primary.isWindingUp;
+                state.primaryMantisActive = primary.isActiveAttack;
+                state.primaryMantisRecovering = primary.isRecovering;
+
+                // Salva per il threat lock
+                lastPrimaryThreat = primary;
+            }
+
+            if (secondary != null)
+            {
+                state.secondaryMantisPattern = secondary.attackPattern;
+                state.secondaryMantisVelX = secondary.velocityX;
+                state.secondaryMantisVelY = secondary.velocityY;
+                state.secondaryMantisRelX = secondary.relativeX;
+                state.secondaryMantisRelY = secondary.relativeY;
+                state.secondaryMantisActive = secondary.isActiveAttack;
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // INTENT + PRIORITÀ (RIPRISTINATO DAL VECCHIO CODICE)
+        // ═══════════════════════════════════════════════════════
+
+        private int GetBossIntent(GameObject boss)
+        {
+            var fsm = boss.GetComponent<PlayMakerFSM>();
+            if (fsm == null) return 0;
+
+            string activeState = fsm.ActiveStateName.ToLower();
+
+            if (activeState.Contains("dash") || activeState.Contains("lunge")) return 1;
+            if (activeState.Contains("land") || activeState.Contains("drop") || activeState.Contains("plunge")) return 2;
+            if (activeState.Contains("throw") || activeState.Contains("wall")) return 3;
+
+            return 0;
+        }
+
+        /// <summary>
+        /// Gerarchia di pericolosità degli attacchi:
+        ///   Drop/Plunge (2) > Dash/Lunge (1) > Throw (3) > Idle (0)
+        ///
+        /// Drop è il più pericoloso: veloce, verticale, poco tempo per reagire.
+        /// Dash è secondo: lineare ma rapido, devi saltare o dashare.
+        /// Throw è il meno urgente: il boomerang è lento, hai tempo per posizionarti.
+        /// </summary>
+        private int PrioritizeIntent(int currentBest, int newIntent)
+        {
+            if (currentBest == 2) return 2;
+            if (newIntent == 2) return 2;
+            if (currentBest == 1) return 1;
+            if (newIntent == 1) return 1;
+            if (currentBest == 3) return 3;
+            if (newIntent == 3) return 3;
+            return 0;
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // FIND ACTIVE MANTIS LORD — GERARCHIA FASE1 → FASE2
+        // (RIPRISTINATO DAL VECCHIO CODICE + TIEBREAKER DISTANZA)
+        //
+        // Fase 1: Se "Mantis Lord" (la principale) è viva → LUI è il target.
+        //         Le sorelle non esistono ancora, non confondersi.
+        //
+        // Fase 2: Sorelle attive. Sort per:
+        //         1. Y bassa (= a terra, = attaccabile)
+        //         2. Tiebreaker: distanza dal player (più vicina = più pericolosa)
+        // ═══════════════════════════════════════════════════════
+        private GameObject FindActiveMantisLord(Vector3 playerPos)
+        {
+            // ─── FASE 1: Boss principale ha priorità assoluta ───
+            GameObject mainLord = GameObject.Find("Mantis Lord");
+            if (mainLord != null && mainLord.activeSelf)
+            {
+                var hm = mainLord.GetComponent<HealthManager>();
+                if (hm != null && hm.hp > 0) return mainLord;
+            }
+
+            // ─── FASE 2: Cerca le sorelle ───
+            string[] sisters = { "Mantis Lord S1", "Mantis Lord S2" };
+            List<GameObject> activeSisters = new List<GameObject>();
+
+            foreach (var name in sisters)
+            {
+                var obj = GameObject.Find(name);
+                if (obj != null && obj.activeSelf)
                 {
-                    var hm = boss.GetComponent<HealthManager>();
+                    var hm = obj.GetComponent<HealthManager>();
                     if (hm != null && hm.hp > 0)
                     {
-                        return boss;
+                        // Filtra proiettili con nome simile
+                        if (obj.name.ToLower().Contains("shot") || obj.name.ToLower().Contains("scythe"))
+                            continue;
+
+                        var fsm = obj.GetComponent<PlayMakerFSM>();
+                        if (fsm != null && fsm.FsmName == "Mantis Lord")
+                            activeSisters.Add(obj);
                     }
                 }
             }
 
-            // Fallback: cerca qualsiasi HealthManager con hp > 50
-            var healthManagers = GameObject.FindObjectsOfType<HealthManager>();
-            foreach (var hm in healthManagers)
+            if (activeSisters.Count == 0) return null;
+            if (activeSisters.Count == 1) return activeSisters[0];
+
+            // Sort: Y bassa prima, poi distanza dal player come tiebreaker
+            activeSisters.Sort((a, b) =>
             {
-                if (hm.hp > 50 && hm.gameObject.activeInHierarchy)
+                float yDiff = Mathf.Abs(a.transform.position.y - b.transform.position.y);
+
+                // Se hanno Y molto diversa (>2 unità), la più bassa vince
+                // (a terra = attaccabile, in aria = sta facendo un attacco aereo)
+                if (yDiff > 2.0f)
                 {
-                    string name = hm.gameObject.name.ToLower();
-
-                    // Escludi il giocatore
-                    if (name.Contains("knight") || name.Contains("hollow"))
-                        continue;
-
-                    if (name.Contains("boss") || name.Contains("hornet") || name.Contains("mantis") ||
-                        name.Contains("mage") || name.Contains("ghost") || name.Contains("defender") ||
-                        name.Contains("traitor"))
-                    {
-                        return hm.gameObject;
-                    }
+                    return a.transform.position.y.CompareTo(b.transform.position.y);
                 }
-            }
 
-            return null;
+                // Stessa altezza → la più vicina al player
+                float distA = Vector2.Distance(playerPos, a.transform.position);
+                float distB = Vector2.Distance(playerPos, b.transform.position);
+                return distA.CompareTo(distB);
+            });
+
+            return activeSisters[0];
         }
 
-        /// <summary>
-        /// Estrae informazioni sui pericoli (proiettili, boomerang mantidi, nemici, spike walls).
-        /// </summary>
+        // ═══════════════════════════════════════════════════════
+        // KILL COUNTING
+        // ═══════════════════════════════════════════════════════
+        private int CountDeadMantisLords()
+        {
+            int killed = 0;
+
+            var boss1 = GameObject.Find("Mantis Lord");
+            var boss2 = GameObject.Find("Mantis Lord S1");
+            var boss3 = GameObject.Find("Mantis Lord S2");
+
+            if (IsDead(boss1)) killed++;
+
+            int s1Hp = GetHealth(boss2);
+            int s2Hp = GetHealth(boss3);
+            bool s1Exists = (boss2 != null && boss2.activeSelf);
+            bool s2Exists = (boss3 != null && boss3.activeSelf);
+
+            if (s1Exists || s2Exists)
+            {
+                if (killed == 0) killed = 1;
+                phase2Detected = true;
+
+                if (s1Exists && s1Hp > 0) lastKnownS1Hp = s1Hp;
+                if (s2Exists && s2Hp > 0) lastKnownS2Hp = s2Hp;
+
+                bool s1Dead = IsDead(boss2);
+                bool s2Dead = IsDead(boss3);
+
+                if (lastKnownS1Hp > 0 && s1Hp <= 0) s1Dead = true;
+                if (lastKnownS2Hp > 0 && s2Hp <= 0) s2Dead = true;
+
+                if (s1Dead) confirmedPhase2Kills = Mathf.Max(confirmedPhase2Kills, 1);
+                if (s2Dead) confirmedPhase2Kills = Mathf.Max(confirmedPhase2Kills, 1);
+                if (s1Dead && s2Dead) confirmedPhase2Kills = 2;
+
+                killed += confirmedPhase2Kills;
+
+                if (confirmedPhase2Kills > 0)
+                    DesktopLogger.Log($"[Kill] Phase2 kills={confirmedPhase2Kills} | S1: hp={s1Hp} dead={s1Dead} | S2: hp={s2Hp} dead={s2Dead}");
+            }
+            else if (phase2Detected)
+            {
+                killed = 3;
+            }
+
+            return killed;
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // HEALTH HELPERS
+        // ═══════════════════════════════════════════════════════
+        private float CalculateTotalMantisHealth()
+        {
+            string[] lords = { "Mantis Lord", "Mantis Lord S1", "Mantis Lord S2" };
+            float totalHp = 0;
+            bool foundAny = false;
+
+            foreach (var name in lords)
+            {
+                var obj = GameObject.Find(name);
+                if (obj != null)
+                {
+                    var hm = obj.GetComponent<HealthManager>();
+                    if (hm != null && hm.hp > 0)
+                    {
+                        totalHp += (float)hm.hp;
+                        foundAny = true;
+                    }
+                }
+            }
+            if (!foundAny) return -1f;
+            return totalHp;
+        }
+
+        private int GetHealth(GameObject obj)
+        {
+            if (obj == null) return 0;
+            var hm = obj.GetComponent<HealthManager>();
+            return (hm != null) ? hm.hp : 0;
+        }
+
+        private bool IsDead(GameObject obj)
+        {
+            if (obj == null || !obj.activeSelf) return true;
+            return GetHealth(obj) <= 0;
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // HAZARDS
+        // ═══════════════════════════════════════════════════════
         private void ExtractHazards(HeroController hero, GameState state)
         {
             var playerPos = hero.transform.position;
-            List<HazardInfo> hazards = new List<HazardInfo>();
+            var hazards = new List<HazardInfo>();
 
-            // 1. BOOMERANG DELLE MANTIDI
-            GameObject[] allObjects = GameObject.FindObjectsOfType<GameObject>();
-            foreach (var obj in allObjects)
+            Collider2D[] hits = Physics2D.OverlapCircleAll(playerPos, HAZARD_DETECTION_RADIUS);
+
+            foreach (var hit in hits)
             {
-                if (obj == null || !obj.activeInHierarchy) continue;
+                if (hazards.Count >= MAX_HAZARDS * 2) break;
 
-                string name = obj.name.ToLower();
+                string name = hit.name.ToLower();
+                string hazardType = "unknown";
+                bool isSpike = false;
+                bool isProjectile = false;
+                bool isEnemy = false;
 
-                // Rileva boomerang mantidi
-                if (name.Contains("javelin") || name.Contains("boomerang") ||
-                    name.Contains("scythe") || name.Contains("mantis") || name.Contains("shot"))
+                var rb = hit.GetComponent<Rigidbody2D>();
+                var damageHero = hit.GetComponent<DamageHero>();
+                bool isStatic = (rb == null) || rb.isKinematic || (rb.velocity.magnitude < 0.1f);
+
+                if ((damageHero != null && isStatic) || name.Contains("spike") || name.Contains("thorn"))
                 {
-                    float distance = Vector2.Distance(playerPos, obj.transform.position);
-                    if (distance < HAZARD_DETECTION_RADIUS)
-                    {
-                        var hazard = new HazardInfo();
-                        hazard.type = "boomerang";
-                        hazard.relX = obj.transform.position.x - playerPos.x;
-                        hazard.relY = obj.transform.position.y - playerPos.y;
-                        hazard.distance = distance;
+                    isSpike = true;
+                    hazardType = "spike";
+                }
 
-                        var rb = obj.GetComponent<Rigidbody2D>();
-                        if (rb != null)
+                if (name.Contains("shot") || name.Contains("scythe") || name.Contains("boomerang") ||
+                   (damageHero != null && !isStatic))
+                {
+                    isProjectile = true;
+                    hazardType = "projectile";
+                }
+
+                if (hit.gameObject.layer == LayerMask.NameToLayer("Enemies"))
+                {
+                    if (!isSpike && !isProjectile)
+                    {
+                        // Ignora mantidi sedute sui troni (Y molto alta rispetto al player)
+                        // MA solo se non siamo in fase 2 (in fase 2 attaccano dall'alto)
+                        bool isPhase2 = phase2Detected || (prevMantisLordsKilled > 0);
+                        if (!isPhase2 && name.Contains("mantis") && hit.transform.position.y > playerPos.y + 5.0f)
                         {
-                            hazard.velocityX = rb.velocity.x;
-                            hazard.velocityY = rb.velocity.y;
+                            continue;
                         }
-
-                        hazards.Add(hazard);
-                        DesktopLogger.Log($"[Hazard] Boomerang detected: {obj.name} at ({hazard.relX:F1}, {hazard.relY:F1})");
+                        isEnemy = true;
+                        hazardType = "enemy";
                     }
                 }
-            }
 
-            // 2. PROJECTILES GENERICI (Backup)
-            string[] projectileTags = new string[] { "Spell", "Projectile", "Attack" };
-            foreach (string tag in projectileTags)
-            {
-                try
+                if (isSpike || isProjectile || isEnemy)
                 {
-                    GameObject[] projectiles = GameObject.FindGameObjectsWithTag(tag);
-                    foreach (var proj in projectiles)
+                    float dist = Vector2.Distance(playerPos, hit.transform.position);
+                    var hInfo = new HazardInfo
                     {
-                        if (proj != null && proj.activeInHierarchy)
-                        {
-                            float distance = Vector2.Distance(playerPos, proj.transform.position);
-                            if (distance < HAZARD_DETECTION_RADIUS)
-                            {
-                                var hazard = new HazardInfo();
-                                hazard.type = "projectile";
-                                hazard.relX = proj.transform.position.x - playerPos.x;
-                                hazard.relY = proj.transform.position.y - playerPos.y;
-                                hazard.distance = distance;
-
-                                var rb = proj.GetComponent<Rigidbody2D>();
-                                if (rb != null)
-                                {
-                                    hazard.velocityX = rb.velocity.x;
-                                    hazard.velocityY = rb.velocity.y;
-                                }
-
-                                hazards.Add(hazard);
-                            }
-                        }
-                    }
-                }
-                catch { }
-            }
-
-            // 3. SPIKE WALLS E HAZARDS STATICI
-            Vector2[] spikeDirections = new Vector2[]
-            {
-                Vector2.down,
-                Vector2.up,
-                Vector2.left,
-                Vector2.right,
-                new Vector2(-1, -1).normalized,
-                new Vector2(1, -1).normalized,
-                new Vector2(-1, 1).normalized,
-                new Vector2(1, 1).normalized
-            };
-
-            foreach (var dir in spikeDirections)
-            {
-                RaycastHit2D hit = Physics2D.Raycast(playerPos, dir, HAZARD_DETECTION_RADIUS, hazardLayer);
-                if (hit.collider != null)
-                {
-                    string hitName = hit.collider.gameObject.name.ToLower();
-                    bool isSpike = hitName.Contains("spike") || hitName.Contains("thorn") || hitName.Contains("hazard") ||
-                                   hit.collider.gameObject.layer == LayerMask.NameToLayer("Hazards");
-
-                    if (isSpike && hit.distance < 10f)
-                    {
-                        var hazard = new HazardInfo();
-                        hazard.type = "spikes";
-                        hazard.relX = hit.point.x - playerPos.x;
-                        hazard.relY = hit.point.y - playerPos.y;
-                        hazard.distance = hit.distance;
-                        hazard.velocityX = 0;
-                        hazard.velocityY = 0;
-
-                        hazards.Add(hazard);
-                        DesktopLogger.Log($"[Hazard] Spikes detected at distance {hit.distance:F1} in direction ({dir.x:F1}, {dir.y:F1})");
-                    }
+                        type = hazardType,
+                        relX = hit.transform.position.x - playerPos.x,
+                        relY = hit.transform.position.y - playerPos.y,
+                        distance = dist,
+                        velocityX = rb != null ? rb.velocity.x : 0f,
+                        velocityY = rb != null ? rb.velocity.y : 0f
+                    };
+                    hazards.Add(hInfo);
                 }
             }
-
-            // 4. ENEMIES (Mantis Lords stesse)
-            var healthManagers = GameObject.FindObjectsOfType<HealthManager>();
-            foreach (var hm in healthManagers)
-            {
-                if (hm.hp > 0 && hm.hp < 50 && hm.gameObject.activeInHierarchy)
-                {
-                    float distance = Vector2.Distance(playerPos, hm.transform.position);
-                    if (distance < HAZARD_DETECTION_RADIUS)
-                    {
-                        var hazard = new HazardInfo();
-                        hazard.type = "enemy";
-                        hazard.relX = hm.transform.position.x - playerPos.x;
-                        hazard.relY = hm.transform.position.y - playerPos.y;
-                        hazard.distance = distance;
-
-                        var rb = hm.GetComponent<Rigidbody2D>();
-                        if (rb != null)
-                        {
-                            hazard.velocityX = rb.velocity.x;
-                            hazard.velocityY = rb.velocity.y;
-                        }
-
-                        hazards.Add(hazard);
-                    }
-                }
-            }
-
-            // Ordina per distanza e prendi i più vicini (6 invece di 3 per Mantis Lords)
-            hazards = hazards.OrderBy(h => h.distance).ToList();
-            state.nearbyHazards = hazards.Take(MAX_HAZARDS * 2).ToList(); // 6 hazard totali
-
-            if (hazards.Count > 0)
-            {
-                DesktopLogger.Log($"[Hazards] Total detected: {hazards.Count}, sending top {state.nearbyHazards.Count}");
-            }
+            state.nearbyHazards = hazards.OrderBy(h => h.distance).Take(MAX_HAZARDS * 2).ToList();
         }
 
-        /// <summary>
-        /// Restituisce uno stato di default quando il gioco non è pronto.
-        /// </summary>
+        // ═══════════════════════════════════════════════════════
+        // DEFAULT STATE
+        // ═══════════════════════════════════════════════════════
         private GameState GetDefaultState()
         {
-            var state = new GameState();
-
-            state.playerX = 0f;
-            state.playerY = 0f;
-            state.playerVelocityX = 0f;
-            state.playerVelocityY = 0f;
-            state.playerHealth = 5;
-            state.playerSoul = 0;
-            state.canDash = false;
-            state.canAttack = true;
-            state.isGrounded = true;
-            state.hasDoubleJump = false;
-            state.isDead = false;
-            state.facingRight = true;
-            state.damageTaken = 0;
-
-            for (int i = 0; i < 5; i++)
-                state.terrainInfo[i] = 1.0f;
-
-            state.bossX = 0f;
-            state.bossY = 0f;
-            state.bossHealth = 0f;
-            state.distanceToBoss = 100f;
-            state.bossRelativeX = 0f;
-            state.bossRelativeY = 0f;
-            state.isFacingBoss = false;
-            state.bossDefeated = false;
-            state.mantisLordsKilled = 0;
-
-            return state;
-        }
-
-        /// <summary>
-        /// Serializza lo stato in JSON per inviarlo al Python.
-        /// </summary>
-        public string SerializeState(GameState state)
-        {
-            try
+            return new GameState
             {
-                return JsonConvert.SerializeObject(state);
-            }
-            catch (Exception e)
-            {
-                DesktopLogger.LogError($"Failed to serialize GameState: {e.Message}");
-                return "{}";
-            }
+                distanceToBoss = 100f,
+                terrainInfo = new float[] { 1, 1, 1, 1, 1 },
+                bossAction = 0,
+                bossHealth = lastKnownBossHealth
+            };
         }
     }
 }

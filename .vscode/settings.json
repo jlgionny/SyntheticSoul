@@ -1,0 +1,56 @@
+{
+  // Python settings
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/AI_Agents",
+    "${workspaceFolder}/AI_Agents/src"
+  ],
+  "python.analysis.autoSearchPaths": true,
+  "python.analysis.diagnosticMode": "workspace",
+
+  // DISABILITA TYPE CHECKING (elimina tutti i warning)
+  "python.analysis.typeCheckingMode": "off",
+
+  // Backup: Override specifici per singoli diagnostici
+  "python.analysis.diagnosticSeverityOverrides": {
+    "reportMissingImports": "none",
+    "reportMissingTypeStubs": "none",
+    "reportOptionalMemberAccess": "none",
+    "reportOptionalSubscript": "none",
+    "reportPrivateImportUsage": "none",
+    "reportAttributeAccessIssue": "none",
+    "reportArgumentType": "none",
+    "reportInvalidStringEscapeSequence": "none",
+    "reportGeneralTypeIssues": "none",
+    "reportUnknownMemberType": "none",
+    "reportUnknownVariableType": "none"
+  },
+
+  // Formatting
+  "python.formatting.provider": "black",
+  "editor.formatOnSave": false,
+
+  // Files to exclude from explorer
+  "files.exclude": {
+    "**/.git": true,
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    "**/.svn": true,
+    "**/.hg": true,
+    "**/CVS": true,
+    "**/.DS_Store": true,
+    "**/.Thumbs.db": true,
+    "**/bin": true,
+    "**/obj": true,
+    "**/checkpoints": false
+  },
+  "explorer.excludeGitIgnore": false,
+
+  // Terminal
+  "terminal.integrated.env.windows": {
+    "PYTHONPATH": "${workspaceFolder}/AI_Agents;${workspaceFolder}/AI_Agents/src"
+  },
+
+  // Editor settings
+  "editor.rulers": [88, 120],
+  "files.trimTrailingWhitespace": true
+}

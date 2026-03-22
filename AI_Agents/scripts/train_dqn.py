@@ -1,499 +1,1078 @@
-import os
-import sys
-import subprocess
-import time
-import math
+"""
+═══════════════════════════════════════════════════════════════════════
+  DQN TRAINING ORCHESTRATOR — Mantis Lords
+  Multi-Instance, Multi-Phase with Hall of Fame + Champion System
+
+  DQN-SPECIFIC DESIGN CHOICES:
+  ● Off-policy: replay buffer stores all transitions for resampling
+  ● ε-greedy exploration with exponential decay (not entropy-based)
+  ● Target network soft-updates (τ=0.005) for stable Q-targets
+  ● Learns every step (when buffer has enough samples)
+  ● No LSTM — DQN uses frame stacking for temporal context
+  ● No kill buffer — replay buffer already stores all experiences
+  ● Works best with sparse rewards (env_dqn.py)
+
+  FIXES APPLIED:
+  ● REMOVED broken epsilon dynamic that made agent random after 1st kill
+  ● Phase 3 config: lower epsilon_start (0.10), faster decay
+  ● Phase 3 config: lower epsilon_start (0.10), faster decay
+  ● Phase 3 promotion condition relaxed (avg_mantis_killed >= 1.8)
+  ● Added Champion System (select_champion + collect_all_champions)
+
+  USAGE:
+    python train_dqn.py --instances 2 --ports 5555 5556
+    python train_dqn.py --phase 1 --ports 5555
+    python train_dqn.py --start-phase 3 --pretrained best.pth
+═══════════════════════════════════════════════════════════════════════
+"""
+
+import os, sys, time, argparse, math, json, csv, random, shutil
 import numpy as np
+import multiprocessing as mp
+import filelock
 from datetime import datetime
+from collections import deque
+from typing import Optional, Dict, List
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
+# ═══ Setup paths ═══
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+SRC_DIR = os.path.join(PROJECT_ROOT, "src")
+sys.path.insert(0, PROJECT_ROOT)
+sys.path.insert(0, os.path.join(SRC_DIR, "agents"))
+sys.path.insert(0, os.path.join(SRC_DIR, "env"))
+sys.path.insert(0, os.path.join(SRC_DIR, "models"))
+sys.path.insert(0, SCRIPT_DIR)
 
-from src.agents.dqn_agent import DQNAgent
-from src.env.hollow_knight_env import HollowKnightEnv
-
-# ============ AUTO PLOT GENERATOR IMPORT ============
-
-
-def auto_generate_plots(
-    log_file, checkpoint_dir, algorithm="DQN", window=20, current_episode=0
-):
-    """
-    Genera automaticamente grafici dal log di training in sottocartelle organizzate.
-
-    Struttura:
-    plots_dqn/
-    ├── episode_100/
-    ├── episode_200/
-    ├── ...
-    └── episode_1000_final/
-    """
-    # Crea sottocartella per l'episodio corrente
-    if current_episode == 1000:  # O num_episodes finale
-        episode_folder = f"episode_{current_episode}_final"
-    else:
-        episode_folder = f"episode_{current_episode}"
-
-    plots_dir = os.path.join("..", f"plots_{algorithm.lower()}", episode_folder)
-    os.makedirs(plots_dir, exist_ok=True)
-
-    if not os.path.exists(log_file):
-        print(f"[Auto Plot] Warning: Log file non trovato: {log_file}")
-        return
-
-    script_path = os.path.join(os.path.dirname(__file__), "generate_plots.py")
-
-    if not os.path.exists(script_path):
-        print("[Auto Plot] Warning: Script generate_plots.py non trovato")
-        return
-
-    try:
-        print("\n[Auto Plot] Generazione grafici in corso...")
-        print(f"[Auto Plot] Cartella: {plots_dir}")
-        result = subprocess.run(
-            [
-                sys.executable,
-                script_path,
-                "--log",
-                log_file,
-                "--type",
-                algorithm.lower(),
-                "--output",
-                plots_dir,
-                "--window",
-                str(window),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-
-        if result.returncode == 0:
-            print(f"[Auto Plot] ✓ Grafici generati in: {plots_dir}")
-
-            # Crea anche un file info.txt nella cartella
-            info_path = os.path.join(plots_dir, "info.txt")
-            with open(info_path, "w") as f:
-                f.write("Training Snapshot\n")
-                f.write("================\n")
-                f.write(f"Algorithm: {algorithm}\n")
-                f.write(f"Episode: {current_episode}\n")
-                f.write(f"Smoothing Window: {window}\n")
-                f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-
-        else:
-            print("[Auto Plot] ✗ Errore durante generazione:")
-            if result.stderr:
-                print(result.stderr[:500])
-
-    except subprocess.TimeoutExpired:
-        print("[Auto Plot] ✗ Timeout durante generazione grafici")
-    except Exception as e:
-        print(f"[Auto Plot] ✗ Errore: {e}")
+from dqn_agent import DQNAgent
+from env_dqn import HollowKnightEnvDQN  # DQN-specific sparse reward env
+from preprocess import (
+    preprocess_state_v1,
+    preprocess_state_v2,
+    compute_pattern_reward_bonus,
+    STATE_DIM_V1,
+    STATE_DIM_V2,
+)
 
 
-class RewardCalculator:
-    """
-    Simplified Reward Function - Combat-Focused
-    """
+# ═══════════════════════════════════════════════════════════════
+# FRAME STACKER
+# ═══════════════════════════════════════════════════════════════
 
-    def __init__(self):
-        self.prev_boss_health = None
-        self.episode_start_time = None
-        self.steps_in_combat_range = 0
-        self.current_step = 0
 
-    def reset(self):
-        self.prev_boss_health = None
-        self.episode_start_time = time.time()
-        self.steps_in_combat_range = 0
-        self.current_step = 0
+class FrameStacker:
+    """Stack N consecutive frames. State [F] -> [F x N]."""
 
-    def calculate_reward(self, state_dict, prev_state, done, info=None):
-        reward = 0.0
-        self.current_step += 1
+    def __init__(self, stack_size: int, state_dim: int):
+        self.stack_size = stack_size
+        self.state_dim = state_dim
+        self.frames = deque(maxlen=stack_size)
 
-        # DAMAGE TO BOSS
-        if (
-            prev_state is not None
-            and "bossHealth" in state_dict
-            and "bossHealth" in prev_state
-        ):
-            boss_damage = prev_state["bossHealth"] - state_dict["bossHealth"]
-            if boss_damage > 0:
-                reward += 20.0
-                print(f"  [Reward] Boss hit: +20.0 ({boss_damage} HP damage)")
+    def reset(self, initial_state: np.ndarray) -> np.ndarray:
+        self.frames.clear()
+        for _ in range(self.stack_size):
+            self.frames.append(initial_state)
+        return np.concatenate(list(self.frames))
 
-        # DAMAGE TAKEN
-        damage_taken = state_dict.get("damageTaken", 0)
-        if damage_taken > 0:
-            damage_penalty = damage_taken * 15.0
-            reward -= damage_penalty
-            print(f"  [Reward] Damage taken: -{damage_penalty:.1f}")
+    def step(self, state: np.ndarray) -> np.ndarray:
+        self.frames.append(state)
+        return np.concatenate(list(self.frames))
 
-        # COMBAT RANGE BONUS
-        curr_dist = state_dict.get("distanceToBoss", 100.0)
-        if 2.0 <= curr_dist <= 6.0:
-            reward += 0.1
-            self.steps_in_combat_range += 1
-        else:
-            self.steps_in_combat_range = 0
 
-        # ATTACK INCENTIVE
-        if info is not None and "action_name" in info:
-            action_name = info["action_name"]
-            if action_name == "ATTACK" and 2.0 <= curr_dist <= 6.0:
-                reward += 0.2
+# ═══════════════════════════════════════════════════════════════
+# HALL OF FAME — SHARED STATE (FILE-LOCKED)
+# ═══════════════════════════════════════════════════════════════
 
-        # WALL STUCK PENALTY
-        terrain_info = state_dict.get("terrainInfo", [1.0, 1.0, 1.0, 1.0, 1.0])
-        player_vel_x = state_dict.get("playerVelocityX", 0.0)
-        player_vel_y = state_dict.get("playerVelocityY", 0.0)
 
-        if len(terrain_info) >= 3:
-            wall_distance = terrain_info[2]
-            is_stuck = (
-                abs(player_vel_x) < 0.1
-                and abs(player_vel_y) < 0.1
-                and wall_distance < 0.1
+class HallOfFame:
+    """Shared state across instances: maintains Top-K best models."""
+
+    def __init__(self, checkpoint_dir: str, keep_top_k: int = 3):
+        self.checkpoint_dir = checkpoint_dir
+        self.keep_top_k = keep_top_k
+        self.models_dir = os.path.join(checkpoint_dir, "best_pool")
+        os.makedirs(self.models_dir, exist_ok=True)
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        self.state_file = os.path.join(checkpoint_dir, "shared_state.json")
+        self.lock_file = os.path.join(checkpoint_dir, "shared_state.lock")
+        self.log_file = os.path.join(checkpoint_dir, "training_log_dqn.csv")
+
+        if not os.path.exists(self.state_file):
+            self._write_state(
+                {
+                    "best_models": [],
+                    "total_episodes": 0,
+                    "global_best_reward": -float("inf"),
+                    "agent_type": "dqn",
+                }
             )
-            if is_stuck:
-                reward -= 0.5
-
-        # ENCOURAGE CENTER MOVEMENT IF FAR
-        if curr_dist > 8.0 and len(terrain_info) >= 3:
-            wall_distance = terrain_info[2]
-            if wall_distance > 0.4:
-                reward += 0.05
-
-        # TERMINAL STATE REWARDS
-        if done:
-            if state_dict.get("isDead", False):
-                reward -= 50.0
-                print("  [Reward] Episode end (death): -50.0")
-            elif state_dict.get("bossDefeated", False):
-                reward += 500.0
-                elapsed = (
-                    time.time() - self.episode_start_time
-                    if self.episode_start_time
-                    else 0
+        if not os.path.exists(self.log_file):
+            with open(self.log_file, "w", newline="") as f:
+                csv.writer(f).writerow(
+                    [
+                        "timestamp",
+                        "instance_id",
+                        "phase",
+                        "episode",
+                        "reward",
+                        "steps",
+                        "mantis_killed",
+                        "boss_hp",
+                        "boss_defeated",
+                        "epsilon",
+                        "learning_rate",
+                        "avg_loss",
+                    ]
                 )
-                time_bonus = max(0, 100 - elapsed / 10)
-                reward += time_bonus
-                print(f"  [Reward] BOSS DEFEATED: +{500 + time_bonus:.1f}")
 
-        return reward
+    def _read_state(self) -> dict:
+        try:
+            with open(self.state_file, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {
+                "best_models": [],
+                "total_episodes": 0,
+                "global_best_reward": -float("inf"),
+            }
 
+    def _write_state(self, state: dict):
+        with open(self.state_file, "w") as f:
+            json.dump(state, f, indent=2)
 
-def preprocess_state(state_dict):
-    """Optimized state preprocessing - 28 features"""
-    features = []
-
-    # PLAYER FEATURES (10)
-    player_x = state_dict.get("playerX", 0.0)
-    player_y = state_dict.get("playerY", 0.0)
-    features.append(player_x / 40.0)
-    features.append(player_y / 30.0)
-    features.append(np.clip(state_dict.get("playerVelocityX", 0.0) / 10.0, -1.0, 1.0))
-    features.append(np.clip(state_dict.get("playerVelocityY", 0.0) / 10.0, -1.0, 1.0))
-    features.append(state_dict.get("playerHealth", 0) / 10.0)
-    features.append(state_dict.get("playerSoul", 0) / 100.0)
-    features.append(float(state_dict.get("canDash", False)))
-    features.append(float(state_dict.get("canAttack", False)))
-    features.append(float(state_dict.get("isGrounded", False)))
-    features.append(float(state_dict.get("hasDoubleJump", False)))
-
-    # TERRAIN INFO (5)
-    terrain_info = state_dict.get("terrainInfo", [1.0, 1.0, 1.0, 1.0, 1.0])
-    if len(terrain_info) < 5:
-        terrain_info = list(terrain_info) + [1.0] * (5 - len(terrain_info))
-    features.extend(terrain_info[:5])
-
-    # BOSS FEATURES (7)
-    boss_x = state_dict.get("bossX", 0.0)
-    boss_y = state_dict.get("bossY", 0.0)
-    boss_relative_x = (boss_x - player_x) / 40.0
-    boss_relative_y = (boss_y - player_y) / 30.0
-    features.append(boss_relative_x)
-    features.append(boss_relative_y)
-    features.append(state_dict.get("bossHealth", 0) / 1000.0)
-    distance_to_boss = state_dict.get("distanceToBoss", 50.0)
-    features.append(np.clip(distance_to_boss / 50.0, 0.0, 1.0))
-    angle_to_boss = math.atan2(boss_relative_y, boss_relative_x) / math.pi
-    features.append(angle_to_boss)
-    features.append(float(state_dict.get("isFacingBoss", False)))
-    boss_vel_x = state_dict.get("bossVelocityX", 0.0)
-    features.append(np.clip(boss_vel_x / 10.0, -1.0, 1.0))
-
-    state_dict["bossRelativeX"] = boss_relative_x
-    state_dict["bossRelativeY"] = boss_relative_y
-
-    # HAZARDS (6 features - top 2)
-    hazards = state_dict.get("nearbyHazards", [])
-    if hazards:
-        hazards_with_dist = []
-        for h in hazards:
-            rel_x = h.get("relX", 0.0)
-            rel_y = h.get("relY", 0.0)
-            dist = math.sqrt(rel_x**2 + rel_y**2)
-            hazards_with_dist.append((dist, h))
-        hazards_with_dist.sort(key=lambda x: x[0])
-        sorted_hazards = [h for _, h in hazards_with_dist[:2]]
-    else:
-        sorted_hazards = []
-
-    for i in range(2):
-        if i < len(sorted_hazards):
-            h = sorted_hazards[i]
-            rel_x = h.get("relX", 0.0) / 30.0
-            rel_y = h.get("relY", 0.0) / 30.0
-            features.append(np.clip(rel_x, -1.0, 1.0))
-            features.append(np.clip(rel_y, -1.0, 1.0))
-            hazard_vel_x = h.get("velocityX", 0.0)
-            hazard_vel_y = h.get("velocityY", 0.0)
-            player_vel_x = state_dict.get("playerVelocityX", 0.0)
-            player_vel_y = state_dict.get("playerVelocityY", 0.0)
-            rel_vel_magnitude = math.sqrt(
-                (hazard_vel_x - player_vel_x) ** 2 + (hazard_vel_y - player_vel_y) ** 2
+    def update_best_model(
+        self, instance_id: int, reward: float, model_path: str
+    ) -> bool:
+        lock = filelock.FileLock(self.lock_file, timeout=15)
+        with lock:
+            state = self._read_state()
+            best_models = state.get("best_models", [])
+            existing_idx, existing_reward = None, -float("inf")
+            for i, entry in enumerate(best_models):
+                if entry.get("instance_id") == instance_id:
+                    existing_idx, existing_reward = i, entry.get(
+                        "reward", -float("inf")
+                    )
+                    break
+            if existing_idx is not None:
+                if reward < existing_reward + 0.5:
+                    return False
+                old = best_models.pop(existing_idx)
+                try:
+                    if os.path.exists(old.get("path", "")):
+                        os.remove(old["path"])
+                except Exception:
+                    pass
+            insert_idx = len(best_models)
+            for i, entry in enumerate(best_models):
+                if reward > entry.get("reward", -float("inf")):
+                    insert_idx = i
+                    break
+            if insert_idx >= self.keep_top_k:
+                return False
+            pool_path = os.path.join(self.models_dir, f"hof_dqn_inst{instance_id}.pth")
+            try:
+                shutil.copy2(model_path, pool_path)
+            except Exception as e:
+                print(f"  [HoF-DQN] Copy failed: {e}")
+                return False
+            best_models.insert(
+                insert_idx,
+                {
+                    "instance_id": instance_id,
+                    "reward": reward,
+                    "path": pool_path,
+                    "timestamp": datetime.now().isoformat(),
+                },
             )
-            features.append(np.clip(rel_vel_magnitude / 20.0, 0.0, 1.0))
-        else:
-            features.extend([0.0, 0.0, 0.0])
+            while len(best_models) > self.keep_top_k:
+                removed = best_models.pop()
+                try:
+                    if os.path.exists(removed.get("path", "")):
+                        os.remove(removed["path"])
+                except Exception:
+                    pass
+            state["best_models"] = best_models
+            if reward > state.get("global_best_reward", -float("inf")):
+                state["global_best_reward"] = reward
+            self._write_state(state)
+            print(f"\n  {'*'*50}")
+            print(
+                f"  * [DQN Inst {instance_id}] HALL OF FAME! "
+                f"R={reward:.2f} (Rank {insert_idx+1}/{self.keep_top_k})"
+            )
+            print(f"  {'*'*50}\n")
+            return True
 
-    return np.array(features, dtype=np.float32)
+    def get_random_best_model_path(self, exclude_instance: int = -1):
+        lock = filelock.FileLock(self.lock_file, timeout=10)
+        with lock:
+            state = self._read_state()
+            models = state.get("best_models", [])
+            cands = [m for m in models if m.get("instance_id") != exclude_instance]
+            if not cands:
+                cands = models
+            if not cands:
+                return None
+            path = random.choice(cands).get("path", "")
+            return path if os.path.exists(path) else None
+
+    def get_global_best_reward(self) -> float:
+        return self._read_state().get("global_best_reward", -float("inf"))
+
+    def increment_episodes(self) -> int:
+        lock = filelock.FileLock(self.lock_file, timeout=10)
+        with lock:
+            state = self._read_state()
+            state["total_episodes"] = state.get("total_episodes", 0) + 1
+            self._write_state(state)
+            return state["total_episodes"]
+
+    def log_episode(
+        self,
+        instance_id,
+        phase,
+        episode,
+        reward,
+        steps,
+        mantis_killed,
+        boss_hp,
+        boss_defeated,
+        epsilon,
+        lr,
+        avg_loss,
+    ):
+        lock = filelock.FileLock(self.lock_file, timeout=5)
+        try:
+            with lock:
+                with open(self.log_file, "a", newline="") as f:
+                    csv.writer(f).writerow(
+                        [
+                            datetime.now().strftime("%H:%M:%S"),
+                            instance_id,
+                            phase,
+                            episode,
+                            f"{reward:.2f}",
+                            steps,
+                            mantis_killed,
+                            f"{boss_hp:.0f}",
+                            1 if boss_defeated else 0,
+                            f"{epsilon:.4f}",
+                            f"{lr:.2e}",
+                            f"{avg_loss:.4f}",
+                        ]
+                    )
+        except Exception:
+            pass
 
 
-def train_dqn(
-    num_episodes=1000,
-    max_steps_per_episode=5000,
-    batch_size=64,
-    learning_rate=1e-4,
-    gamma=0.99,
-    epsilon_start=1.0,
-    epsilon_end=0.01,
-    epsilon_decay=10000,
-    target_update_freq=1000,
-    save_freq=50,
-    checkpoint_dir="checkpoints_dqn",
-    host="localhost",
-    port=5555,
-    plot_freq=100,
+# ═══════════════════════════════════════════════════════════════
+# DQN-SPECIFIC PHASE CONFIGS
+#
+# FIXES APPLIED:
+#   Phase 4: epsilon_start 0.15 -> 0.10, epsilon_end 0.05 -> 0.03,
+#            epsilon_decay 300000 -> 150000, promotion relaxed to 1.8
+#   Phase 4: epsilon_start 0.25 -> 0.10, epsilon_end 0.05 -> 0.02,
+#            epsilon_decay 800000 -> 400000
+# ═══════════════════════════════════════════════════════════════
+
+PHASE_CONFIGS = {
+    1: {
+        "name": "SURVIVE",
+        "description": "Learn to dodge and not die",
+        "episodes": 1000,
+        "lr": 1e-4,
+        "epsilon_start": 1.00,
+        "epsilon_end": 0.05,
+        "epsilon_decay": 100000,
+        "hidden_sizes": [128, 256, 128],
+        "buffer_capacity": 100000,
+        "batch_size": 256,
+        "target_update_tau": 0.005,
+        "gamma": 0.99,
+        "use_pattern_bonus": True,
+        "preprocess_version": 2,
+        "promotion_condition": "avg_survival_steps >= 850",
+        "promotion_avg_window": 25,
+    },
+    2: {
+        "name": "FIRST BLOOD",
+        "description": "Deal damage and kill the first mantis",
+        "episodes": 1500,
+        "lr": 3e-5,
+        "epsilon_start": 0.15,
+        "epsilon_end": 0.05,
+        "epsilon_decay": 40000,
+        "hidden_sizes": [128, 256, 128],
+        "buffer_capacity": 100000,
+        "batch_size": 256,
+        "target_update_tau": 0.005,
+        "gamma": 0.995,
+        "use_pattern_bonus": True,
+        "preprocess_version": 2,
+        "promotion_condition": "avg_mantis_killed >= 0.8",
+        "promotion_avg_window": 30,
+    },
+    3: {
+        "name": "DUAL MANTIS",
+        "description": "Handle two mantises at once",
+        "episodes": 2000,
+        "lr": 2e-5,
+        "epsilon_start": 0.10,
+        "epsilon_end": 0.03,
+        "epsilon_decay": 150000,
+        "hidden_sizes": [128, 256, 128],
+        "buffer_capacity": 150000,
+        "batch_size": 256,
+        "target_update_tau": 0.005,
+        "gamma": 0.995,
+        "use_pattern_bonus": True,
+        "preprocess_version": 2,
+        "promotion_condition": "avg_mantis_killed >= 1.5",
+        "promotion_avg_window": 30,
+    },
+    4: {
+        "name": "MASTERY",
+        "description": "Full victory, optimize time and no-hit",
+        "episodes": 2500,
+        "lr": 1e-5,
+        "epsilon_start": 0.10,
+        "epsilon_end": 0.02,
+        "epsilon_decay": 400000,
+        "hidden_sizes": [128, 256, 128],
+        "buffer_capacity": 200000,
+        "batch_size": 512,
+        "target_update_tau": 0.002,
+        "gamma": 0.995,
+        "use_pattern_bonus": True,
+        "preprocess_version": 2,
+        "promotion_condition": "avg_mantis_killed >= 2.5",
+        "promotion_avg_window": 50,
+    },
+}
+
+
+# ═══════════════════════════════════════════════════════════════
+# UTILITY
+# ═══════════════════════════════════════════════════════════════
+
+
+def check_promotion(
+    episode_steps_history, episode_kills, episode_damage, wins, total_episodes, config
 ):
-    """Main training loop with organized auto-plot generation."""
+    window = config["promotion_avg_window"]
+    if len(episode_steps_history) < window:
+        return False
+    ctx = {
+        "avg_survival_steps": np.mean(list(episode_steps_history)[-window:]),
+        "avg_mantis_killed": np.mean(list(episode_kills)[-window:]),
+        "avg_damage_dealt": np.mean(list(episode_damage)[-window:]),
+        "win_rate": wins / max(total_episodes, 1),
+    }
+    try:
+        return eval(config["promotion_condition"], {"__builtins__": {}}, ctx)
+    except Exception:
+        return False
 
-    # Salva i checkpoint nella cartella AI_Agents
-    ai_agents_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    checkpoint_dir_full = os.path.join(ai_agents_root, checkpoint_dir)
 
-    os.makedirs(checkpoint_dir_full, exist_ok=True)
+# ═══════════════════════════════════════════════════════════════
+# DQN TRAINING WORKER
+#
+# FIX APPLIED:
+# ● REMOVED broken epsilon dynamic (lines 414-421 in original)
+# ═══════════════════════════════════════════════════════════════
 
-    print(f"[Train] Connecting to Hollow Knight at {host}:{port}...")
-    env = HollowKnightEnv(host=host, port=port)
-    initial_state = env.reset()
-    state_array = preprocess_state(initial_state)
-    state_size = len(state_array)
-    action_size = 8
 
-    print(f"[Train] State size: {state_size}, Action size: {action_size}")
-    print("[Train] Using SIMPLIFIED reward system (combat-focused)")
-    print(f"[Train] Grafici organizzati in sottocartelle ogni {plot_freq} episodi")
+def train_dqn_instance(
+    instance_id: int,
+    port: int,
+    phase: int,
+    checkpoint_dir: str,
+    pretrained_path: Optional[str] = None,
+    auto_promote: bool = True,
+    sync_interval: int = 15,
+    max_steps: int = 5000,
+):
+    """Worker function for DQN training on a single instance."""
+    cfg = PHASE_CONFIGS[phase]
+    phase_dir = os.path.join(checkpoint_dir, f"phase_{phase}")
+    instance_dir = os.path.join(phase_dir, f"instance_{instance_id}")
+    os.makedirs(instance_dir, exist_ok=True)
 
+    print(f"\n[DQN Inst {instance_id}] Phase {phase}: {cfg['name']} | Port {port}")
+    hof = HallOfFame(phase_dir, keep_top_k=3)
+
+    # ═══ DQN ENV: Sparse reward environment ═══
+    try:
+        env = HollowKnightEnvDQN(
+            host="localhost", port=port, phase=phase, reward_scale=5.0
+        )
+    except Exception as e:
+        print(f"[DQN Inst {instance_id}] Connection failed: {e}")
+        return None
+
+    # Preprocessing
+    STACK_SIZE = 4
+    version = cfg["preprocess_version"]
+    raw_dim = STATE_DIM_V2 if version == 2 else STATE_DIM_V1
+    stacked_dim = raw_dim * STACK_SIZE
+    preprocess_fn = preprocess_state_v2 if version == 2 else preprocess_state_v1
+    stacker = FrameStacker(STACK_SIZE, raw_dim)
+    print(f"[DQN Inst {instance_id}] State: {raw_dim} x {STACK_SIZE} = {stacked_dim}")
+
+    # ═══ DQN AGENT ═══
     agent = DQNAgent(
-        state_size=state_size,
-        action_size=action_size,
-        learning_rate=learning_rate,
-        gamma=gamma,
-        buffer_capacity=100000,
+        state_size=stacked_dim,
+        action_size=8,
+        hidden_sizes=cfg["hidden_sizes"],
+        learning_rate=cfg["lr"],
+        gamma=cfg["gamma"],
+        buffer_capacity=cfg["buffer_capacity"],
     )
 
-    latest_checkpoint = os.path.join(checkpoint_dir_full, "latest.pth")
-    if os.path.exists(latest_checkpoint):
+    # Load pretrained
+    loaded = False
+    if pretrained_path and os.path.exists(pretrained_path):
         try:
-            agent.load(latest_checkpoint)
-            print("[Train] Resumed from checkpoint")
+            agent.load(pretrained_path)
+            agent.steps_done = 0
+            print(f"[DQN Inst {instance_id}] Loaded pretrained: {pretrained_path}")
+            loaded = True
         except Exception as e:
-            print(f"[Train] Could not load checkpoint: {e}")
+            print(f"[DQN Inst {instance_id}] Pretrained load failed: {e}")
+    if not loaded:
+        pool_path = hof.get_random_best_model_path(exclude_instance=instance_id)
+        if pool_path:
+            try:
+                agent.load(pool_path)
+                print(f"[DQN Inst {instance_id}] Loaded from Hall of Fame")
+            except Exception:
+                pass
 
-    reward_calc = RewardCalculator()
-    episode_rewards = []
-    episode_losses = []
+    # Tracking
     best_reward = -float("inf")
+    best_model_path = None
+    episode_rewards = deque(maxlen=200)
+    episode_steps_hist = deque(maxlen=200)
+    episode_kills = deque(maxlen=200)
+    episode_damage = deque(maxlen=200)
+    wins, total_ep = 0, 0
+    dqn_batch_size = cfg["batch_size"]
+    target_tau = cfg["target_update_tau"]
 
-    log_file = os.path.join(checkpoint_dir_full, "training_log.txt")
-
-    if not os.path.exists(log_file):
-        with open(log_file, "w") as f:
-            f.write("episode,total_reward,avg_loss,steps,epsilon,damage_taken\n")
-
-    print(f"\n{'='*60}")
-    print(f"Starting Training - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"{'='*60}\n")
-
-    for episode in range(num_episodes):
-        state_dict = env.reset()
-        state = preprocess_state(state_dict)
-        reward_calc.reset()
+    # ═══ TRAINING LOOP ═══
+    for episode in range(cfg["episodes"]):
+        raw_state_dict = env.reset()
+        raw_state = preprocess_fn(raw_state_dict)
+        state = stacker.reset(raw_state)
 
         episode_reward = 0.0
-        episode_loss = []
-        prev_state_dict = None
-        total_damage_taken = 0
+        episode_losses = []
+        ep_boss_hp_start = raw_state_dict.get("bossHealth", 100.0)
 
-        print(f"\n[Episode {episode + 1}/{num_episodes}] Starting...")
-
-        for step in range(max_steps_per_episode):
-            epsilon = agent.get_epsilon(epsilon_start, epsilon_end, epsilon_decay)
-            action = agent.select_action(state, epsilon=epsilon)
-            next_state_dict, done, info = env.step(action)
-            next_state = preprocess_state(next_state_dict)
-
-            reward = reward_calc.calculate_reward(
-                next_state_dict, prev_state_dict, done, info
-            )
-            episode_reward += reward
-            damage_this_step = next_state_dict.get("damageTaken", 0)
-            total_damage_taken += damage_this_step
-
-            agent.store_transition(state, action, reward, next_state, done)
-
-            if len(agent.memory) >= batch_size:
-                loss = agent.optimize_model(batch_size=batch_size)
-                if loss is not None:
-                    episode_loss.append(loss)
-
-            if agent.steps_done > 0 and agent.steps_done % target_update_freq == 0:
-                agent.update_target_network()
-                print(f"  [Step {agent.steps_done}] Target network updated")
-
-            state = next_state
-            prev_state_dict = state_dict
-            state_dict = next_state_dict
-
-            if step % 100 == 0:
-                curr_dist = next_state_dict.get("distanceToBoss", 0)
-                in_range = "✓" if 2.0 <= curr_dist <= 6.0 else "✗"
-                print(
-                    f"  [Step {step}] Reward: {episode_reward:.2f}, Dist: {curr_dist:.1f} {in_range}, Dmg: {total_damage_taken}"
-                )
-
-            if done:
-                reason = (
-                    "Player died"
-                    if state_dict.get("isDead")
-                    else (
-                        "Boss defeated" if state_dict.get("bossDefeated") else "Unknown"
-                    )
-                )
-                print(f"  [Episode End] Reason: {reason}")
-                break
-
-        agent.episodes_done += 1
-        episode_rewards.append(episode_reward)
-        avg_loss = np.mean(episode_loss) if episode_loss else 0.0
-        episode_losses.append(avg_loss)
-        avg_reward_last_10 = (
-            np.mean(episode_rewards[-10:])
-            if len(episode_rewards) >= 10
-            else episode_reward
+        # ═══ DQN: epsilon-greedy (exponential decay over total steps) ═══
+        epsilon = agent.get_epsilon(
+            cfg["epsilon_start"], cfg["epsilon_end"], cfg["epsilon_decay"]
         )
 
-        print(f"\n[Episode {episode + 1}] Summary:")
-        print(f"  Total Reward: {episode_reward:.2f}")
-        print(f"  Avg Loss: {avg_loss:.4f}")
-        print(f"  Steps: {step + 1}")
-        print(f"  Epsilon: {epsilon:.4f}")
-        print(f"  Avg Reward (last 10): {avg_reward_last_10:.2f}")
-        print(f"  Combat Range Steps: {reward_calc.steps_in_combat_range}")
-        print(f"  Total Damage Taken: {total_damage_taken}")
+        for step in range(max_steps):
 
-        with open(log_file, "a") as f:
-            f.write(
-                f"{episode + 1},{episode_reward:.2f},{avg_loss:.4f},{step + 1},{epsilon:.4f},{total_damage_taken}\n"
-            )
+            # ═══ FIX: REMOVED BROKEN EPSILON DYNAMIC ═══
+            # Uniform epsilon throughout the episode.
+            step_epsilon = epsilon
 
+            # ═══ DQN: epsilon-greedy selection ═══
+            action = agent.select_action(state, epsilon=step_epsilon)
+            next_state_dict, reward, done, info = env.step(action)
+
+            if cfg["use_pattern_bonus"]:
+                reward += compute_pattern_reward_bonus(next_state_dict, action)
+
+            next_raw = preprocess_fn(next_state_dict)
+            next_state = stacker.step(next_raw)
+            episode_reward += reward
+
+            # ═══ DQN: Store in replay buffer ═══
+            agent.store_transition(state, action, reward, next_state, done)
+            state = next_state
+
+            # ═══ DQN: Learn every step from replay buffer ═══
+            if len(agent.memory) >= dqn_batch_size:
+                loss = agent.optimize_model(batch_size=dqn_batch_size)
+                if loss is not None:
+                    episode_losses.append(loss)
+                agent.update_target_network(tau=target_tau)
+
+            if done:
+                break
+
+        # Post-episode
+        total_ep += 1
+        mantis_killed = next_state_dict.get("mantisLordsKilled", 0)
+        boss_hp_end = next_state_dict.get("bossHealth", 0)
+        boss_defeated = next_state_dict.get("bossDefeated", False)
+        damage_dealt = max(0, ep_boss_hp_start - boss_hp_end)
+
+        episode_rewards.append(episode_reward)
+        episode_steps_hist.append(step + 1)
+        episode_kills.append(mantis_killed)
+        episode_damage.append(damage_dealt)
+        if boss_defeated:
+            wins += 1
+
+        # Save
+        latest_path = os.path.join(instance_dir, "latest.pth")
+        agent.save(latest_path)
         if episode_reward > best_reward:
             best_reward = episode_reward
-            best_path = os.path.join(checkpoint_dir_full, "best_model.pth")
-            agent.save(best_path)
-            print(f"  [NEW BEST] Saved to {best_path}")
+            best_model_path = os.path.join(instance_dir, "best.pth")
+            agent.save(best_model_path)
+            hof.update_best_model(instance_id, episode_reward, best_model_path)
+        if (episode + 1) % 100 == 0:
+            agent.save(os.path.join(instance_dir, f"checkpoint_ep{episode+1}.pth"))
 
-        if (episode + 1) % save_freq == 0:
-            checkpoint_path = os.path.join(
-                checkpoint_dir_full, f"episode_{episode + 1}.pth"
-            )
-            agent.save(checkpoint_path)
-            agent.save(latest_checkpoint)
-            print(f"  [Checkpoint] Saved to {checkpoint_path}")
+        # Sync with Hall of Fame
+        if (episode + 1) % (sync_interval * 3) == 0 and len(episode_rewards) >= 20:
+            my_avg = np.mean(list(episode_rewards)[-20:])
+            global_best = hof.get_global_best_reward()
+            if my_avg < global_best * 0.3 and global_best > 0:
+                sync_path = hof.get_random_best_model_path(exclude_instance=instance_id)
+                if sync_path:
+                    try:
+                        agent.load(sync_path)
+                        print(
+                            f"  [DQN {instance_id}] Synced with HoF "
+                            f"(avg={my_avg:.1f} vs best={global_best:.1f})"
+                        )
+                    except Exception:
+                        pass
 
-        # ============ AUTO GENERATE PLOTS IN ORGANIZED FOLDERS ============
-        if (episode + 1) % plot_freq == 0 or (episode + 1) == num_episodes:
-            print(f"\n{'='*60}")
-            print(f"[PLOTS] Generazione grafici episodio {episode + 1}/{num_episodes}")
-            print(f"{'='*60}")
-            auto_generate_plots(
-                log_file=log_file,
-                checkpoint_dir=checkpoint_dir_full,
-                algorithm="DQN",
-                window=min(20, max(10, (episode + 1) // 50)),  # Smoothing adattivo
-                current_episode=episode + 1,
+        # Log
+        avg_loss = np.mean(episode_losses) if episode_losses else 0
+        hof.log_episode(
+            instance_id,
+            phase,
+            episode + 1,
+            episode_reward,
+            step + 1,
+            mantis_killed,
+            boss_hp_end,
+            boss_defeated,
+            epsilon,
+            cfg["lr"],
+            avg_loss,
+        )
+        hof.increment_episodes()
+
+        ep_num = episode + 1
+        print(
+            f"  [DQN {instance_id}] P{phase} Ep {ep_num:>4}/{cfg['episodes']}"
+            f" | R={episode_reward:>+7.2f} | Steps={step+1:>4}"
+            f" | HP={boss_hp_end:>5.0f} | K={mantis_killed}"
+            f" | eps={epsilon:.3f} | Loss={avg_loss:.4f}"
+            f" | Buf={len(agent.memory)}"
+        )
+
+        if boss_defeated:
+            wr = wins / total_ep
+            print(f"\n  {'*'*20}  [DQN {instance_id}] VICTORY!  {'*'*20}")
+            print(
+                f"  P{phase} Ep {ep_num} | R={episode_reward:+.2f} "
+                f"| Wins={wins} WR={wr:.0%}"
             )
-            print(f"{'='*60}\n")
+            print(f"  {'*'*52}\n")
+        elif mantis_killed >= 2:
+            print(
+                f"  >>>> [DQN {instance_id}] KILL x{mantis_killed}! "
+                f"Ep {ep_num} <<<<"
+            )
+
+        # Promotion
+        if auto_promote and ep_num >= cfg.get("promotion_avg_window", 20):
+            if check_promotion(
+                episode_steps_hist, episode_kills, episode_damage, wins, total_ep, cfg
+            ):
+                print(
+                    f"\n  ^^^ [DQN {instance_id}] PROMOTED! "
+                    f"Phase {phase} complete! ^^^"
+                )
+                break
+
+    env.close()
+    print(
+        f"[DQN Inst {instance_id}] Phase {phase} DONE "
+        f"| Best R={best_reward:+.2f} | Wins={wins}/{total_ep}"
+    )
+    return best_model_path
+
+
+# ═══════════════════════════════════════════════════════════════
+# MULTI-INSTANCE LAUNCHER
+# ═══════════════════════════════════════════════════════════════
+
+
+def run_phase_multi_instance(
+    phase: int,
+    ports: List[int],
+    checkpoint_dir: str,
+    pretrained_path: Optional[str] = None,
+    auto_promote: bool = True,
+    sync_interval: int = 15,
+):
+    cfg = PHASE_CONFIGS[phase]
+    n = len(ports)
+    print(f"\n{'='*70}")
+    print(f"  PHASE {phase}: {cfg['name']} | Agent: DQN | Instances: {n}")
+    print(f"  Ports: {ports}")
+    print(
+        f"  Episodes: {cfg['episodes']} | Promotion: " f"{cfg['promotion_condition']}"
+    )
+    print(f"{'='*70}\n")
+
+    if n == 1:
+        return train_dqn_instance(
+            instance_id=0,
+            port=ports[0],
+            phase=phase,
+            checkpoint_dir=checkpoint_dir,
+            pretrained_path=pretrained_path,
+            auto_promote=auto_promote,
+            sync_interval=sync_interval,
+        )
+    else:
+        processes = []
+        for i, port in enumerate(ports):
+            p = mp.Process(
+                target=train_dqn_instance,
+                kwargs={
+                    "instance_id": i,
+                    "port": port,
+                    "phase": phase,
+                    "checkpoint_dir": checkpoint_dir,
+                    "pretrained_path": pretrained_path,
+                    "auto_promote": auto_promote,
+                    "sync_interval": sync_interval,
+                },
+            )
+            p.start()
+            processes.append(p)
+            time.sleep(1)
+        for p in processes:
+            p.join()
+
+        phase_dir = os.path.join(checkpoint_dir, f"phase_{phase}")
+        hof = HallOfFame(phase_dir, keep_top_k=3)
+        best_path = hof.get_random_best_model_path()
+        if not best_path:
+            for i in range(n):
+                cand = os.path.join(phase_dir, f"instance_{i}", "best.pth")
+                if os.path.exists(cand):
+                    best_path = cand
+                    break
+        return best_path
+
+
+# ═══════════════════════════════════════════════════════════════
+# MULTI-PHASE PIPELINE
+# ═══════════════════════════════════════════════════════════════
+
+
+def run_all_phases(
+    ports: List[int],
+    base_dir: str,
+    start_phase: int = 1,
+    end_phase: int = 4,
+    pretrained_path: Optional[str] = None,
+    auto_promote: bool = True,
+    sync_interval: int = 15,
+):
+    print(f"\n{'='*70}")
+    print(f"  DQN MULTI-PHASE PIPELINE — MANTIS LORDS")
+    print(f"  Instances: {len(ports)} | Phases: {start_phase}->{end_phase}")
+    print(f"  Ports: {ports}")
+    print(f"{'='*70}\n")
+
+    os.makedirs(base_dir, exist_ok=True)
+    current_model = pretrained_path
+    n_instances = len(ports)
+
+    for phase in range(start_phase, end_phase + 1):
+        if phase not in PHASE_CONFIGS:
+            print(f"[ERROR] Phase {phase} not configured!")
+            break
+        best_model = run_phase_multi_instance(
+            phase=phase,
+            ports=ports,
+            checkpoint_dir=base_dir,
+            pretrained_path=current_model,
+            auto_promote=auto_promote,
+            sync_interval=sync_interval,
+        )
+        if best_model and os.path.exists(best_model):
+            current_model = best_model
+            print(f"\n[DQN Pipeline] Phase {phase} -> best: {best_model}")
+        else:
+            print(f"\n[DQN Pipeline] Phase {phase} produced no model. Stop.")
+            break
+
+        # Eleggi il champion per questa fase
+        select_champion(base_dir, phase=phase, n_instances=n_instances)
+
+        print(f"\n{'-'*70}\n  Pausing 5s before next phase...\n{'-'*70}\n")
+        time.sleep(5)
+
+    # Raccogli tutti i champion in un'unica cartella
+    collect_all_champions(base_dir, n_instances=n_instances)
+
+    print(f"\n{'='*70}")
+    print(f"  DQN TRAINING PIPELINE COMPLETE")
+    print(f"  Final model: {current_model}")
+    print(f"{'='*70}\n")
+
+
+# ═══════════════════════════════════════════════════════════════
+# CHAMPION SYSTEM — Seleziona il miglior modello per ogni fase
+#
+# Dopo ogni run:
+#  1. Confronta i best.pth di tutte le istanze
+#  2. Elegge il "champion" della run corrente
+#  3. Se esiste un champion precedente, li confronta
+#  4. Salva il vincitore come phase_N_champion.pth + .json
+# ═══════════════════════════════════════════════════════════════
+
+
+def select_champion(
+    checkpoint_dir: str, phase: int = 4, n_instances: int = 3
+) -> Optional[str]:
+    """
+    Trova il miglior modello tra tutte le istanze di una fase.
+    Restituisce il percorso del champion.pth salvato.
+    Funziona per QUALSIASI fase, non solo la 5.
+    """
+    phase_dir = os.path.join(checkpoint_dir, f"phase_{phase}")
+    champion_dir = os.path.join(checkpoint_dir, "champion")
+    os.makedirs(champion_dir, exist_ok=True)
+
+    phase_name = PHASE_CONFIGS.get(phase, {}).get("name", f"PHASE_{phase}")
+    champion_model = os.path.join(champion_dir, f"phase_{phase}_champion.pth")
+    champion_meta = os.path.join(champion_dir, f"phase_{phase}_champion.json")
+    history_file = os.path.join(champion_dir, f"phase_{phase}_history.json")
+
+    # ─── 1. Trova il best di ogni istanza dalla HoF ───
+    candidates = []
+
+    # Prova dalla shared_state.json (Hall of Fame)
+    state_file = os.path.join(phase_dir, "shared_state.json")
+    if os.path.exists(state_file):
+        try:
+            with open(state_file, "r") as f:
+                state = json.load(f)
+            for entry in state.get("best_models", []):
+                path = entry.get("path", "")
+                reward = entry.get("reward", -float("inf"))
+                inst_id = entry.get("instance_id", -1)
+                if os.path.exists(path):
+                    candidates.append(
+                        {
+                            "path": path,
+                            "reward": reward,
+                            "instance_id": inst_id,
+                            "source": "hall_of_fame",
+                        }
+                    )
+        except Exception:
+            pass
+
+    # Fallback: controlla i best.pth di ogni istanza
+    for i in range(n_instances):
+        best_path = os.path.join(phase_dir, f"instance_{i}", "best.pth")
+        if os.path.exists(best_path):
+            already = any(c["instance_id"] == i for c in candidates)
+            if not already:
+                candidates.append(
+                    {
+                        "path": best_path,
+                        "reward": -1.0,
+                        "instance_id": i,
+                        "source": "instance_best",
+                    }
+                )
+
+    if not candidates:
+        print(f"\n  [Champion] Nessun modello trovato in {phase_dir}")
+        return None
+
+    # ─── 2. Seleziona il migliore della run corrente ───
+    candidates.sort(key=lambda c: c["reward"], reverse=True)
+    new_champion = candidates[0]
 
     print(f"\n{'='*60}")
-    print("Training Completed!")
+    print(f"  CHAMPION SELECTION [DQN] — Phase {phase}: {phase_name}")
     print(f"{'='*60}")
-    print(f"Best Reward: {best_reward:.2f}")
+    print(f"  Candidati trovati: {len(candidates)}")
+    for i, c in enumerate(candidates):
+        marker = " < BEST" if i == 0 else ""
+        print(
+            f"    Inst {c['instance_id']}: R={c['reward']:.2f} ({c['source']}){marker}"
+        )
 
-    final_path = os.path.join(checkpoint_dir_full, "final_model.pth")
-    agent.save(final_path)
-    env.close()
+    # ─── 3. Confronta con champion precedente ───
+    old_champion = None
+    if os.path.exists(champion_meta):
+        try:
+            with open(champion_meta, "r") as f:
+                old_champion = json.load(f)
+            print(
+                f"\n  Champion precedente: R={old_champion.get('reward', '?'):.2f} "
+                f"(Inst {old_champion.get('instance_id', '?')}, "
+                f"run {old_champion.get('run_id', '?')})"
+            )
+        except Exception:
+            old_champion = None
 
+    # Determina il run_id
+    run_id = 1
+    if os.path.exists(history_file):
+        try:
+            with open(history_file, "r") as f:
+                history = json.load(f)
+            run_id = len(history) + 1
+        except Exception:
+            pass
 
-if __name__ == "__main__":
-    HYPERPARAMS = {
-        "num_episodes": 1000,
-        "max_steps_per_episode": 5000,
-        "batch_size": 64,
-        "learning_rate": 1e-4,
-        "gamma": 0.99,
-        "epsilon_start": 1.0,
-        "epsilon_end": 0.01,
-        "epsilon_decay": 10000,
-        "target_update_freq": 1000,
-        "save_freq": 50,
-        "checkpoint_dir": "checkpoints",
-        "host": "localhost",
-        "port": 5555,
-        "plot_freq": 100,
+    # ─── 4. Confronto e salvataggio ───
+    save_new = False
+    if old_champion is None:
+        save_new = True
+        print(f"\n  Nessun champion precedente -> il nuovo diventa champion")
+    elif new_champion["reward"] > old_champion.get("reward", -float("inf")):
+        save_new = True
+        improvement = new_champion["reward"] - old_champion.get("reward", 0)
+        print(
+            f"\n  * NUOVO CHAMPION! R={new_champion['reward']:.2f} > "
+            f"R={old_champion.get('reward', 0):.2f} (+{improvement:.2f})"
+        )
+    else:
+        print(
+            f"\n  Champion precedente confermato (R={old_champion.get('reward', 0):.2f} >= "
+            f"R={new_champion['reward']:.2f})"
+        )
+        print(f"  Il modello phase_{phase}_champion.pth resta invariato.")
+
+    if save_new:
+        try:
+            shutil.copy2(new_champion["path"], champion_model)
+        except Exception as e:
+            print(f"  [Champion] Errore copia: {e}")
+            return None
+
+        meta = {
+            "reward": new_champion["reward"],
+            "instance_id": new_champion["instance_id"],
+            "source": new_champion["source"],
+            "source_path": new_champion["path"],
+            "run_id": run_id,
+            "timestamp": datetime.now().isoformat(),
+            "phase": phase,
+            "phase_name": phase_name,
+        }
+        with open(champion_meta, "w") as f:
+            json.dump(meta, f, indent=2)
+
+    # ─── 5. Aggiorna la history ───
+    history_entry = {
+        "run_id": run_id,
+        "reward": new_champion["reward"],
+        "instance_id": new_champion["instance_id"],
+        "is_new_champion": save_new,
+        "timestamp": datetime.now().isoformat(),
     }
 
-    print("=" * 60)
-    print("HOLLOW KNIGHT DQN TRAINING - ORGANIZED PLOTS")
-    print("=" * 60)
-    print("\nKey Features:")
-    print("  ✓ Simplified combat-focused reward")
-    print("  ✓ Auto-generated plots every 100 episodes")
-    print("  ✓ Organized in subfolders (episode_100, episode_200, ...)")
-    print("  ✓ Final plots at episode 1000")
-    print("  ✓ Adaptive smoothing")
-    print("\nStructure:")
-    print("  plots_dqn/")
-    print("  ├── episode_100/")
-    print("  ├── episode_200/")
-    print("  ├── ...")
-    print("  └── episode_1000_final/")
-    print("\nHyperparameters:")
-    for key, value in HYPERPARAMS.items():
-        print(f"  {key}: {value}")
-    print("=" * 60)
-    print()
+    history = []
+    if os.path.exists(history_file):
+        try:
+            with open(history_file, "r") as f:
+                history = json.load(f)
+        except Exception:
+            pass
+    history.append(history_entry)
+    with open(history_file, "w") as f:
+        json.dump(history, f, indent=2)
 
-    try:
-        train_dqn(**HYPERPARAMS)
-    except KeyboardInterrupt:
-        print("\n[Train] Training interrupted by user")
-    except Exception as e:
-        print(f"\n[Train] Error during training: {e}")
-        import traceback
+    # ─── 6. Stampa riepilogo ───
+    print(f"\n  Champion Phase {phase}: {champion_model}")
+    if len(history) > 1:
+        print(f"\n  History ({len(history)} run):")
+        for h in history:
+            marker = " * CHAMPION" if h["is_new_champion"] else ""
+            print(
+                f"    Run {h['run_id']}: R={h['reward']:.2f} (Inst {h['instance_id']}){marker}"
+            )
 
-        traceback.print_exc()
+    print(f"{'='*60}\n")
+    return champion_model
+
+
+def collect_all_champions(checkpoint_dir: str, n_instances: int = 3):
+    """
+    Raccoglie i champion di tutte le fasi in un'unica cartella.
+    Scansiona quali fasi hanno dati e crea/aggiorna il champion per ognuna.
+    Stampa un riepilogo con i comandi play pronti.
+    """
+    existing_phases = []
+    for phase in range(1, 5):
+        phase_dir = os.path.join(checkpoint_dir, f"phase_{phase}")
+        if os.path.exists(phase_dir):
+            existing_phases.append(phase)
+
+    if not existing_phases:
+        return
+
+    champion_dir = os.path.join(checkpoint_dir, "champion")
+    os.makedirs(champion_dir, exist_ok=True)
+
+    print(f"\n{'='*60}")
+    print(f"  RACCOLTA CHAMPION [DQN] — Tutte le fasi")
+    print(f"{'='*60}")
+
+    found = []
+    for phase in existing_phases:
+        champion_file = os.path.join(champion_dir, f"phase_{phase}_champion.pth")
+        champion_meta = os.path.join(champion_dir, f"phase_{phase}_champion.json")
+
+        if not os.path.exists(champion_file):
+            select_champion(checkpoint_dir, phase=phase, n_instances=n_instances)
+
+        if os.path.exists(champion_meta):
+            try:
+                with open(champion_meta, "r") as f:
+                    meta = json.load(f)
+                found.append(meta)
+            except Exception:
+                found.append({"phase": phase, "reward": "?", "phase_name": "?"})
+        elif os.path.exists(champion_file):
+            found.append({"phase": phase, "reward": "?", "phase_name": "?"})
+
+    if not found:
+        print(f"\n  Nessun champion trovato.")
+        return
+
+    print(f"\n  Champion disponibili:")
+    print(f"  {'-'*56}")
+    for meta in found:
+        phase = meta.get("phase", "?")
+        name = meta.get("phase_name", PHASE_CONFIGS.get(phase, {}).get("name", "?"))
+        reward = meta.get("reward", "?")
+        inst = meta.get("instance_id", "?")
+        runs = meta.get("run_id", "?")
+        reward_str = (
+            f"R={reward:.2f}" if isinstance(reward, (int, float)) else f"R={reward}"
+        )
+        champ_path = os.path.join(champion_dir, f"phase_{phase}_champion.pth")
+        print(
+            f"    Phase {phase} ({name:>12}): {reward_str} | Inst {inst} | run {runs}"
+        )
+        print(f"      -> python play.py --agent dqn --model {champ_path}")
+
+    # Segnala il champion globale (fase 5 se esiste, altrimenti la più alta)
+    global_champ = None
+    for phase in [4, 3, 2, 1]:
+        candidate = os.path.join(champion_dir, f"phase_{phase}_champion.pth")
+        if os.path.exists(candidate):
+            global_champ = candidate
+            break
+    if not os.path.exists(global_champ):
+        for phase in [5, 4, 3, 2, 1]:
+            candidate = os.path.join(champion_dir, f"phase_{phase}_champion.pth")
+            if os.path.exists(candidate):
+                global_champ = candidate
+                break
+
+    print(f"\n  {'-'*56}")
+    print(f"  Miglior modello complessivo:")
+    print(f"    python play.py --agent dqn --model {global_champ}")
+    print(f"{'='*60}\n")
+
+
+# ═══════════════════════════════════════════════════════════════
+# CLI
+# ═══════════════════════════════════════════════════════════════
+
+if __name__ == "__main__":
+    mp.set_start_method("spawn", force=True)
+
+    parser = argparse.ArgumentParser(
+        description="DQN Training for Mantis Lords",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python train_dqn.py --instances 2 --ports 5555 5556
+  python train_dqn.py --phase 1 --ports 5555
+  python train_dqn.py --start-phase 3 --pretrained best.pth
+        """,
+    )
+
+    parser.add_argument("--instances", type=int, default=1)
+    parser.add_argument("--ports", type=int, nargs="+", default=[5555])
+    parser.add_argument("--start-phase", type=int, default=1)
+    parser.add_argument("--end-phase", type=int, default=4)
+    parser.add_argument("--phase", type=int, default=None, help="Run ONLY this phase")
+    parser.add_argument("--pretrained", type=str, default=None)
+    parser.add_argument("--output", type=str, default="training_output_dqn")
+    parser.add_argument("--no-auto-promote", action="store_true")
+    parser.add_argument(
+        "--episodes", type=int, default=None, help="Override episodes per phase"
+    )
+    parser.add_argument("--sync-interval", type=int, default=15)
+
+    args = parser.parse_args()
+
+    if args.episodes:
+        for pid in PHASE_CONFIGS:
+            PHASE_CONFIGS[pid]["episodes"] = args.episodes
+
+    ports = list(args.ports)
+    while len(ports) < args.instances:
+        ports.append(ports[-1] + 1)
+    ports = ports[: args.instances]
+
+    print(f"\n  Agent: DQN | Instances: {args.instances} | Ports: {ports}")
+
+    # ═══ Prima di tutto: raccogli i champion da tutte le fasi già esistenti ═══
+    collect_all_champions(
+        checkpoint_dir=args.output,
+        n_instances=args.instances,
+    )
+
+    if args.phase:
+        run_phase_multi_instance(
+            phase=args.phase,
+            ports=ports,
+            checkpoint_dir=args.output,
+            pretrained_path=args.pretrained,
+            auto_promote=not args.no_auto_promote,
+            sync_interval=args.sync_interval,
+        )
+
+        # Eleggi il champion per la fase appena completata
+        select_champion(
+            checkpoint_dir=args.output,
+            phase=args.phase,
+            n_instances=args.instances,
+        )
+
+        # Raccogli tutti i champion disponibili (anche di fasi precedenti)
+        collect_all_champions(
+            checkpoint_dir=args.output,
+            n_instances=args.instances,
+        )
+    else:
+        run_all_phases(
+            ports=ports,
+            base_dir=args.output,
+            start_phase=args.start_phase,
+            end_phase=args.end_phase,
+            pretrained_path=args.pretrained,
+            auto_promote=not args.no_auto_promote,
+            sync_interval=args.sync_interval,
+        )

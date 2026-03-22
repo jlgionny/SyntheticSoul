@@ -1,21 +1,30 @@
 using System;
-using System.Linq;
-using UnityEngine;
-using System.Reflection;
+using Modding;
 using InControl;
+using UnityEngine;
 
 namespace SyntheticSoulMod
 {
     /// <summary>
-    /// Virtual Controller con layout Xbox Standard:
-    /// A=Jump, X=Attack, B=Cast/Focus, RT=Dash
+    /// Virtual Input Device per Hollow Knight - Basato su HKRL
+    /// Usa bool state invece di DateTime expiration per maggiore stabilità
     /// </summary>
     public class SyntheticSoulInputDevice : InputDevice
     {
-        public InputControl LeftControl { get; private set; }
-        public InputControl RightControl { get; private set; }
+        // State flags
+        private bool KeyUp = false;
+        private bool KeyDown = false;
+        private bool KeyLeft = false;
+        private bool KeyRight = false;
+        private bool KeyJump = false;
+        private bool KeyAttack = false;
+        private bool KeyDash = false;
+        private bool KeyCast = false;
+
         public InputControl UpControl { get; private set; }
         public InputControl DownControl { get; private set; }
+        public InputControl LeftControl { get; private set; }
+        public InputControl RightControl { get; private set; }
         public InputControl JumpControl { get; private set; }
         public InputControl AttackControl { get; private set; }
         public InputControl DashControl { get; private set; }
@@ -23,70 +32,229 @@ namespace SyntheticSoulMod
 
         public SyntheticSoulInputDevice() : base("Synthetic Soul Virtual Controller")
         {
-            DesktopLogger.Log("Creating SyntheticSoulInputDevice (XBOX LAYOUT)...");
+            UpControl = AddControl(InputControlType.DPadUp, "Up");
+            DownControl = AddControl(InputControlType.DPadDown, "Down");
+            LeftControl = AddControl(InputControlType.DPadLeft, "Left");
+            RightControl = AddControl(InputControlType.DPadRight, "Right");
+            JumpControl = AddControl(InputControlType.Action1, "Jump");
+            CastControl = AddControl(InputControlType.Action2, "Cast");
+            AttackControl = AddControl(InputControlType.Action3, "Attack");
+            DashControl = AddControl(InputControlType.RightTrigger, "Dash");
 
-            // Stick Sinistro
-            LeftControl = AddControl(InputControlType.LeftStickLeft, "Left");
-            RightControl = AddControl(InputControlType.LeftStickRight, "Right");
-            UpControl = AddControl(InputControlType.LeftStickUp, "Up");
-            DownControl = AddControl(InputControlType.LeftStickDown, "Down");
+            DesktopLogger.Log("✓ SyntheticSoulInputDevice created (HKRL-style)");
+        }
 
-            // Pulsanti
-            JumpControl = AddControl(InputControlType.Action1, "Jump (A)");
-            CastControl = AddControl(InputControlType.Action2, "Cast (B)");
-            AttackControl = AddControl(InputControlType.Action3, "Attack (X)");
+        public override void Update(ulong updateTick, float deltaTime)
+        {
+            UpdateWithState(InputControlType.DPadUp, KeyUp, updateTick, deltaTime);
+            UpdateWithState(InputControlType.DPadDown, KeyDown, updateTick, deltaTime);
+            UpdateWithState(InputControlType.DPadLeft, KeyLeft, updateTick, deltaTime);
+            UpdateWithState(InputControlType.DPadRight, KeyRight, updateTick, deltaTime);
+            UpdateWithState(InputControlType.Action1, KeyJump, updateTick, deltaTime);
+            UpdateWithState(InputControlType.Action2, KeyCast, updateTick, deltaTime);
+            UpdateWithState(InputControlType.Action3, KeyAttack, updateTick, deltaTime);
+            UpdateWithValue(InputControlType.RightTrigger, KeyDash ? 1 : 0, updateTick, deltaTime);
+        }
 
-            // Grilletti
-            DashControl = AddControl(InputControlType.RightTrigger, "Dash (RT)");
+        // ============ HELPER METHODS (come in HKRL) ============
 
-            DesktopLogger.Log("✓ Virtual Device Created: A=Jump, X=Attack, B=Cast, RT=Dash");
+        private static bool CanDash()
+        {
+            if (HeroController.instance == null) return false;
+            return ReflectionHelper.CallMethod<HeroController, bool>(HeroController.instance, "CanDash");
+        }
+
+        private static bool CanAttack()
+        {
+            if (HeroController.instance == null) return false;
+            return ReflectionHelper.CallMethod<HeroController, bool>(HeroController.instance, "CanAttack");
+        }
+
+        private static bool CanJump()
+        {
+            if (HeroController.instance == null) return false;
+            return ReflectionHelper.CallMethod<HeroController, bool>(HeroController.instance, "CanJump");
+        }
+
+        private static bool CanDoubleJump()
+        {
+            if (HeroController.instance == null) return false;
+            return ReflectionHelper.CallMethod<HeroController, bool>(HeroController.instance, "CanDoubleJump");
+        }
+
+        private static bool CanCast()
+        {
+            if (HeroController.instance == null) return false;
+            return ReflectionHelper.CallMethod<HeroController, bool>(HeroController.instance, "CanCast");
+        }
+
+        private static bool CanWallJump()
+        {
+            if (HeroController.instance == null) return false;
+            return ReflectionHelper.CallMethod<HeroController, bool>(HeroController.instance, "CanWallJump");
+        }
+
+        // ============ PUBLIC ACTION METHODS ============
+
+        public void Reset()
+        {
+            KeyUp = false;
+            KeyDown = false;
+            KeyLeft = false;
+            KeyRight = false;
+            KeyJump = false;
+            KeyAttack = false;
+            KeyDash = false;
+            KeyCast = false;
+        }
+
+        public void Left()
+        {
+            KeyLeft = true;
+            KeyRight = false;
+        }
+
+        public void Right()
+        {
+            KeyRight = true;
+            KeyLeft = false;
+        }
+
+        public void Up()
+        {
+            KeyUp = true;
+            // NON resettare KeyDown - necessario per spell direzionali
+        }
+
+        public void Down()
+        {
+            KeyDown = true;
+            // NON resettare KeyUp - necessario per spell direzionali
+        }
+
+        public void Jump()
+        {
+            if (!CanJump() && !CanDoubleJump() && !CanWallJump())
+                return;
+
+            KeyJump = true;
+            KeyDash = false;
+        }
+
+        public void Attack()
+        {
+            if (!CanAttack())
+                return;
+
+            if (KeyLeft && HeroController.instance != null)
+                HeroController.instance.FaceLeft();
+            if (KeyRight && HeroController.instance != null)
+                HeroController.instance.FaceRight();
+
+            KeyAttack = true;
+            KeyCast = false;
+        }
+
+        public void Dash()
+        {
+            if (!CanDash())
+                return;
+
+            if (KeyLeft && HeroController.instance != null)
+                HeroController.instance.FaceLeft();
+            else if (KeyRight && HeroController.instance != null)
+                HeroController.instance.FaceRight();
+
+            KeyDash = true;
+            KeyJump = false;
+        }
+
+        public void Cast()
+        {
+            if (!CanCast())
+                return;
+
+            if (KeyLeft && HeroController.instance != null)
+                HeroController.instance.FaceLeft();
+            if (KeyRight && HeroController.instance != null)
+                HeroController.instance.FaceRight();
+
+            KeyCast = true;
+            KeyAttack = false;
+        }
+
+        // Stop methods per rilasciare input
+        public void StopLR()
+        {
+            KeyLeft = false;
+            KeyRight = false;
+        }
+
+        public void StopUD()
+        {
+            KeyUp = false;
+            KeyDown = false;
+        }
+
+        public void StopJump()
+        {
+            KeyJump = false;
+        }
+
+        public void StopDash()
+        {
+            KeyDash = false;
+        }
+
+        public void StopAttack()
+        {
+            KeyAttack = false;
+        }
+
+        public void StopCast()
+        {
+            KeyCast = false;
         }
     }
 
     public class ActionExecutor
     {
         private HeroController hero;
-        private SyntheticSoulInputDevice virtualDevice;
+        private SyntheticSoulInputDevice device;
         private bool deviceAttached = false;
         private bool actionsBindingComplete = false;
 
-        // Input state
-        private bool wantLeft, wantRight, wantUp, wantDown;
-        private bool wantJump, wantAttack, wantDash, wantCast;
-
-        // Expiration timers
-        private DateTime leftExpiration, rightExpiration, upExpiration, downExpiration;
-        private DateTime jumpExpiration, attackExpiration, dashExpiration, castExpiration;
-
-        // Durations & Cooldowns
-        private const double MOVEMENT_DURATION = 0.15;
-        private const double TAP_DURATION = 0.05;
-
-        private float lastJumpTime = 0f;
-        private float lastAttackTime = 0f;
-        private float lastDashTime = 0f;
-        private float lastCastTime = 0f;
-        private float lastLogTime = 0f;
-
-        // Reflection vars
         private object inputHandler;
         private object heroActions;
 
+        // Timer per auto-release degli input
+        private float jumpReleaseTime = 0f;
+        private float attackReleaseTime = 0f;
+        private float dashReleaseTime = 0f;
+        private float castReleaseTime = 0f;
+        private float moveReleaseTime = 0f;
+        private float lookReleaseTime = 0f;
+
+        private const float TAP_DURATION = 0.05f;
+        private const float MOVEMENT_DURATION = 0.15f;
+
         public ActionExecutor()
         {
-            DesktopLogger.Log("═══ ACTIONEXECUTOR INITIALIZED (with FORCE support) ═══");
-            InitializeVirtualDevice();
+            DesktopLogger.Log("═══ ACTIONEXECUTOR V47 (HKRL-INSPIRED) ═══");
+            InitializeDevice();
         }
 
-        private void InitializeVirtualDevice()
+        private void InitializeDevice()
         {
             try
             {
-                virtualDevice = new SyntheticSoulInputDevice();
-                if (InputManager.Devices == null) return;
+                device = new SyntheticSoulInputDevice();
+                if (InputManager.Devices == null)
+                    return;
 
-                InputManager.AttachDevice(virtualDevice);
+                InputManager.AttachDevice(device);
                 deviceAttached = true;
+                DesktopLogger.Log("✓ Device attached to InputManager");
             }
             catch (Exception e)
             {
@@ -96,37 +264,42 @@ namespace SyntheticSoulMod
 
         private void BindDeviceToHeroActions()
         {
-            if (actionsBindingComplete || hero == null) return;
+            if (actionsBindingComplete || hero == null)
+                return;
 
             try
             {
-                DesktopLogger.Log("--- BINDING CONTROLS ---");
-
                 var inputHandlerField = typeof(HeroController).GetField("inputHandler",
-                    BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+                    System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.Public);
 
-                if (inputHandlerField == null) return;
+                if (inputHandlerField == null)
+                    return;
+
                 inputHandler = inputHandlerField.GetValue(hero);
-
                 var heroActionsField = inputHandler.GetType().GetField("inputActions",
-                    BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+                    System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.Public);
 
-                if (heroActionsField == null) return;
+                if (heroActionsField == null)
+                    return;
+
                 heroActions = heroActionsField.GetValue(inputHandler);
-
                 Type haType = heroActions.GetType();
 
-                BindAction(haType, "left", virtualDevice.LeftControl);
-                BindAction(haType, "right", virtualDevice.RightControl);
-                BindAction(haType, "up", virtualDevice.UpControl);
-                BindAction(haType, "down", virtualDevice.DownControl);
-                BindAction(haType, "jump", virtualDevice.JumpControl);
-                BindAction(haType, "attack", virtualDevice.AttackControl);
-                BindAction(haType, "dash", virtualDevice.DashControl);
-                BindAction(haType, "cast", virtualDevice.CastControl);
+                BindAction(haType, "left", device.LeftControl);
+                BindAction(haType, "right", device.RightControl);
+                BindAction(haType, "up", device.UpControl);
+                BindAction(haType, "down", device.DownControl);
+                BindAction(haType, "jump", device.JumpControl);
+                BindAction(haType, "attack", device.AttackControl);
+                BindAction(haType, "dash", device.DashControl);
+                BindAction(haType, "cast", device.CastControl);
 
                 actionsBindingComplete = true;
-                DesktopLogger.Log("✓ Controls Bound Successfully");
+                DesktopLogger.Log("✓ Actions bound to hero");
             }
             catch (Exception e)
             {
@@ -138,128 +311,127 @@ namespace SyntheticSoulMod
         {
             try
             {
-                FieldInfo field = type.GetField(name,
-                    BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+                var field = type.GetField(name,
+                    System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.Public);
 
                 if (field != null)
                 {
                     var action = field.GetValue(heroActions) as PlayerAction;
-                    if (action != null)
+                    if (action != null && control != null)
                     {
                         action.AddBinding(new DeviceBindingSource(control.Target));
-                        DesktopLogger.Log($"✓ Bound '{name}' to {control.Target}");
                     }
                 }
             }
             catch { }
         }
 
-        /// <summary>
-        /// Executes an action on the virtual controller.
-        /// </summary>
-        /// <param name="action">Action command (e.g., "JUMP", "ATTACK")</param>
-        /// <param name="force">If true, bypass acceptingInput check (for wake-up)</param>
         public void ExecuteAction(string action, bool force = false)
         {
             if (hero == null)
                 hero = HeroController.instance;
 
-            if (hero == null || hero.cState.dead || hero.cState.recoiling)
+            if (hero == null || hero.cState.dead)
                 return;
 
-            // ============ CRITICAL CHECK: ACCEPTING INPUT ============
-            // UNLESS force=true (used for waking up sleeping hero)
             if (!force && !hero.acceptingInput)
             {
-                // Log opzionale (throttled)
-                if (Time.time - lastLogTime > 2.0f)
-                {
-                    DesktopLogger.Log("ActionExecutor: Blocking input - cutscene/spawn");
-                    lastLogTime = Time.time;
-                }
-                ReleaseAllKeys();
+                device?.Reset();
                 return;
-            }
-
-            // ============ FORCE MODE LOGGING ============
-            if (force && !hero.acceptingInput)
-            {
-                DesktopLogger.Log($"[FORCE] Executing '{action}' despite acceptingInput=false (wake-up mode)");
             }
 
             try
             {
                 string cmd = action.ToUpper().Trim();
-                DateTime now = DateTime.Now;
                 float timeNow = Time.time;
 
                 switch (cmd)
                 {
                     case "MOVE_LEFT":
-                        leftExpiration = now.AddSeconds(MOVEMENT_DURATION);
-                        rightExpiration = DateTime.MinValue;
+                        device?.Left();
+                        moveReleaseTime = timeNow + MOVEMENT_DURATION;
                         break;
 
                     case "MOVE_RIGHT":
-                        rightExpiration = now.AddSeconds(MOVEMENT_DURATION);
-                        leftExpiration = DateTime.MinValue;
+                        device?.Right();
+                        moveReleaseTime = timeNow + MOVEMENT_DURATION;
                         break;
 
                     case "UP":
-                        upExpiration = now.AddSeconds(MOVEMENT_DURATION);
+                        device?.Up();
+                        lookReleaseTime = timeNow + MOVEMENT_DURATION;
                         break;
 
                     case "DOWN":
-                        downExpiration = now.AddSeconds(MOVEMENT_DURATION);
+                        device?.Down();
+                        lookReleaseTime = timeNow + MOVEMENT_DURATION;
                         break;
 
                     case "JUMP":
-                        if (timeNow - lastJumpTime > 0.2f)
-                        {
-                            jumpExpiration = now.AddSeconds(0.15);
-                            lastJumpTime = timeNow;
-                        }
+                        device?.Jump();
+                        jumpReleaseTime = timeNow + 0.15f;
                         break;
 
                     case "ATTACK":
-                        if (timeNow - lastAttackTime > 0.35f)
-                        {
-                            attackExpiration = now.AddSeconds(TAP_DURATION);
-                            lastAttackTime = timeNow;
-                        }
+                        device?.Attack();
+                        attackReleaseTime = timeNow + TAP_DURATION;
                         break;
 
                     case "DASH":
-                        if (timeNow - lastDashTime > 0.4f)
-                        {
-                            dashExpiration = now.AddSeconds(TAP_DURATION);
-                            lastDashTime = timeNow;
-                            DesktopLogger.Log("DASH (RT)");
-                        }
+                        device?.Dash();
+                        dashReleaseTime = timeNow + TAP_DURATION;
                         break;
 
                     case "SPELL":
                     case "CAST":
-                        if (PlayerData.instance.MPCharge >= 33 && timeNow - lastCastTime > 0.3f)
-                        {
-                            castExpiration = now.AddSeconds(TAP_DURATION);
-                            lastCastTime = timeNow;
-                            DesktopLogger.Log("SPELL (B)");
-                        }
-                        break;
-
-                    case "DREAM_NAIL":
-                        upExpiration = now.AddSeconds(0.3);
+                        device?.Cast();
+                        castReleaseTime = timeNow + TAP_DURATION;
                         break;
 
                     case "IDLE":
-                        ReleaseAllKeys();
+                        device?.Reset();
+                        ResetAllTimers();
+                        break;
+
+                    // ============ COMBO ACTIONS ============
+                    case "JUMP_ATTACK":
+                        // Jump + Attack simultanei (essenziale vs Mantis Lords)
+                        device?.Jump();
+                        device?.Attack();
+                        jumpReleaseTime = timeNow + 0.15f;
+                        attackReleaseTime = timeNow + TAP_DURATION;
+                        break;
+
+                    case "DASH_ATTACK":
+                        // Dash + Attack (per closing distance e colpire)
+                        device?.Dash();
+                        device?.Attack();
+                        dashReleaseTime = timeNow + TAP_DURATION;
+                        attackReleaseTime = timeNow + TAP_DURATION + 0.05f; // Leggero delay
+                        break;
+
+                    case "DASH_LEFT":
+                        // Dash verso sinistra
+                        device?.Left();
+                        device?.Dash();
+                        moveReleaseTime = timeNow + TAP_DURATION;
+                        dashReleaseTime = timeNow + TAP_DURATION;
+                        break;
+
+                    case "DASH_RIGHT":
+                        // Dash verso destra
+                        device?.Right();
+                        device?.Dash();
+                        moveReleaseTime = timeNow + TAP_DURATION;
+                        dashReleaseTime = timeNow + TAP_DURATION;
                         break;
                 }
             }
             catch (Exception e)
             {
-                DesktopLogger.LogError($"Exec Error: {e.Message}");
+                DesktopLogger.LogError($"ExecuteAction error: {e.Message}");
             }
         }
 
@@ -273,95 +445,65 @@ namespace SyntheticSoulMod
 
             if (!hero.acceptingInput || hero.cState.dead || hero.cState.transitioning)
             {
-                ReleaseAllKeys();
+                device?.Reset();
+                ResetAllTimers();
                 return;
             }
 
             if (!actionsBindingComplete && deviceAttached)
-            {
                 BindDeviceToHeroActions();
-            }
 
-            DateTime now = DateTime.Now;
-            float dt = Time.deltaTime;
+            // Auto-release degli input scaduti
+            float timeNow = Time.time;
 
-            wantLeft = now < leftExpiration;
-            wantRight = now < rightExpiration;
-            wantUp = now < upExpiration;
-            wantDown = now < downExpiration;
-            wantJump = now < jumpExpiration;
-            wantAttack = now < attackExpiration;
-            wantDash = now < dashExpiration;
-            wantCast = now < castExpiration;
+            if (timeNow > moveReleaseTime)
+                device?.StopLR();
 
-            if (deviceAttached && virtualDevice != null)
-            {
-                ulong tick = InputManager.CurrentTick;
+            if (timeNow > lookReleaseTime)
+                device?.StopUD();
 
-                virtualDevice.LeftControl.UpdateWithState(wantLeft, tick, dt);
-                virtualDevice.RightControl.UpdateWithState(wantRight, tick, dt);
-                virtualDevice.UpControl.UpdateWithState(wantUp, tick, dt);
-                virtualDevice.DownControl.UpdateWithState(wantDown, tick, dt);
-                virtualDevice.JumpControl.UpdateWithState(wantJump, tick, dt);
-                virtualDevice.AttackControl.UpdateWithState(wantAttack, tick, dt);
-                virtualDevice.DashControl.UpdateWithState(wantDash, tick, dt);
-                virtualDevice.CastControl.UpdateWithState(wantCast, tick, dt);
+            if (timeNow > jumpReleaseTime)
+                device?.StopJump();
 
-                virtualDevice.Commit(tick, dt);
-            }
+            if (timeNow > attackReleaseTime)
+                device?.StopAttack();
+
+            if (timeNow > dashReleaseTime)
+                device?.StopDash();
+
+            if (timeNow > castReleaseTime)
+                device?.StopCast();
         }
 
-        private void ReleaseAllKeys()
+        private void ResetAllTimers()
         {
-            try
-            {
-                leftExpiration = DateTime.MinValue;
-                rightExpiration = DateTime.MinValue;
-                upExpiration = DateTime.MinValue;
-                downExpiration = DateTime.MinValue;
-                jumpExpiration = DateTime.MinValue;
-                attackExpiration = DateTime.MinValue;
-                dashExpiration = DateTime.MinValue;
-                castExpiration = DateTime.MinValue;
-
-                if (deviceAttached && virtualDevice != null)
-                {
-                    ulong tick = InputManager.CurrentTick;
-                    float dt = Time.deltaTime;
-
-                    virtualDevice.LeftControl.UpdateWithState(false, tick, dt);
-                    virtualDevice.RightControl.UpdateWithState(false, tick, dt);
-                    virtualDevice.UpControl.UpdateWithState(false, tick, dt);
-                    virtualDevice.DownControl.UpdateWithState(false, tick, dt);
-                    virtualDevice.JumpControl.UpdateWithState(false, tick, dt);
-                    virtualDevice.AttackControl.UpdateWithState(false, tick, dt);
-                    virtualDevice.DashControl.UpdateWithState(false, tick, dt);
-                    virtualDevice.CastControl.UpdateWithState(false, tick, dt);
-
-                    virtualDevice.Commit(tick, dt);
-                }
-            }
-            catch (Exception e)
-            {
-                DesktopLogger.LogError($"ActionExecutor: Error releasing keys: {e.Message}");
-            }
+            jumpReleaseTime = 0f;
+            attackReleaseTime = 0f;
+            dashReleaseTime = 0f;
+            castReleaseTime = 0f;
+            moveReleaseTime = 0f;
+            lookReleaseTime = 0f;
         }
 
         public void DestroyDevice()
         {
-            DesktopLogger.Log("ActionExecutor: Destroying virtual device...");
+            DesktopLogger.Log("ActionExecutor: Destroying device...");
 
-            ReleaseAllKeys();
-
-            if (virtualDevice != null && deviceAttached)
+            if (device != null)
             {
-                InputManager.DetachDevice(virtualDevice);
-                virtualDevice = null;
-                deviceAttached = false;
-                actionsBindingComplete = false;
+                device.Reset();
+
+                if (deviceAttached)
+                {
+                    InputManager.DetachDevice(device);
+                    deviceAttached = false;
+                }
+
+                device = null;
             }
 
-            DesktopLogger.Log("✓ ActionExecutor: Virtual device destroyed");
+            actionsBindingComplete = false;
+            DesktopLogger.Log("✓ Device destroyed");
         }
     }
 }
