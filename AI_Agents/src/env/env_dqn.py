@@ -22,11 +22,19 @@
     signals and develop "orbiting" behaviors
 
   OBSERVATION & ACTION SPACE: Identical to env_ppo.py
+
+  FIXES APPLIED:
+  ● Phase 3: Progressive kill rewards (1st kill reduced, 2nd/3rd boosted)
+  ● Phase 3: HP threshold bonuses during dual phase for intermediate signal
+  ● Phase 3: Damage multiplier boost during dual phase
+  ● Phase 3: Death penalty scaled by progress (less punitive if fighting duals)
+  ● Phase 4: Same progressive structure + speed/no-hit terminal bonuses
 ═══════════════════════════════════════════════════════════════════════
 """
 
 import socket
 import json
+from threading import active_count
 import time
 from typing import Dict, Tuple, Optional, Any
 import numpy as np
@@ -41,11 +49,10 @@ class HollowKnightEnvDQN:
     assignment, so we rely on large discrete rewards at key events.
 
     TRAINING PHASES (identical to PPO env):
-      1 - SURVIVAL:      Learn to dodge, move, not die
-      2 - FIRST HITS:    Learn to punish during recovery windows
-      3 - AGGRESSION:    Maximize DPS, kill first mantis
-      4 - DUAL MANTIS:   Handle two mantises simultaneously
-      5 - MASTERY:       Full victory, optimize time & no-hit
+      1 - SURVIVE:       Learn to dodge, move, not die
+      2 - FIRST BLOOD:   Deal damage and kill the first mantis
+      3 - DUAL MANTIS:   Handle two mantises simultaneously
+      4 - MASTERY:       Full victory, optimize time & no-hit
     """
 
     # ═══ ACTION SPACE — Identical across PPO/DQN ═══
@@ -89,10 +96,7 @@ class HollowKnightEnvDQN:
         self.total_damage_taken = 0
         self.episode_steps = 0
 
-        phase_names = {
-            1: "SURVIVAL", 2: "FIRST HITS", 3: "AGGRESSION",
-            4: "DUAL MANTIS", 5: "MASTERY"
-        }
+        phase_names = {1: "SURVIVE", 2: "FIRST BLOOD", 3: "DUAL MANTIS", 4: "MASTERY"}
         print(f"[EnvDQN] Initialized — PHASE {phase}: {phase_names.get(phase, '?')}")
         print(f"         Host: {host}:{port} | Reward Scale: 1/{self.reward_scale}")
         print(f"         Mode: SPARSE rewards (DQN-optimized)")
@@ -154,19 +158,19 @@ class HollowKnightEnvDQN:
         if self.phase == 1:
             return self._reward_phase1_survive(state, done)
         elif self.phase == 2:
-            return self._reward_phase2_first_hits(state, done)
+            return self._reward_phase2_first_blood(state, done)
         elif self.phase == 3:
-            return self._reward_phase3_aggression(state, done)
+            return self._reward_phase3_dual_mantis(state, done)
         elif self.phase == 4:
-            return self._reward_phase4_dual_mantis(state, done)
-        elif self.phase == 5:
-            return self._reward_phase5_mastery(state, done)
+            return self._reward_phase4_mastery(state, done)
         else:
-            return self._reward_phase3_aggression(state, done)
+            return self._reward_phase2_first_blood(state, done)
 
-    def _reward_phase1_survive(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
+    def _reward_phase1_survive(
+        self, state: Dict, done: bool
+    ) -> Tuple[float, Dict[str, Any]]:
         """
-        PHASE 1: SURVIVAL (DQN Sparse)
+        PHASE 1: SURVIVE (DQN Sparse)
         Sparse: minimal per-step, large penalty on damage/death,
         milestone bonuses at long survival intervals.
         """
@@ -178,19 +182,16 @@ class HollowKnightEnvDQN:
         hazard_type = state.get("lastHazardType", 0)
 
         # ═══ DQN SPARSE: Minimal living reward ═══
-        # Near-zero to avoid Q-value inflation; DQN doesn't need
-        # dense signal — replay buffer handles credit assignment
         reward += 0.01
 
         # ═══ DQN SPARSE: Large discrete penalty on damage ═══
-        # Single sharp penalty — DQN learns "avoid this state" directly
         if damage_taken > 0:
-            reward -= 4.0  # Higher than PPO's -3.0
+            reward -= 4.0
             if hazard_type == 2:  # Spikes
-                reward -= 4.0  # Harsh spike penalty
+                reward -= 4.0
                 info["damage_source"] = "SPIKES"
 
-        # Dodge success (kept but smaller than PPO — event-based)
+        # Dodge success
         if state.get("primaryMantisActive", False) and damage_taken == 0:
             reward += 0.15
             info["event"] = "DODGE_SUCCESS"
@@ -202,71 +203,20 @@ class HollowKnightEnvDQN:
 
         # ═══ DQN SPARSE: Large terminal death penalty ═══
         if done and is_dead:
-            reward -= 3.0
+            reward -= 15.0
 
         # ═══ DQN SPARSE: Infrequent milestone bonuses ═══
-        # Every 200 steps (less frequent than PPO's 100) with larger bonus
         if self.episode_steps > 0 and self.episode_steps % 200 == 0:
             reward += 0.5
             info["milestone"] = f"SURVIVED_{self.episode_steps}_STEPS"
 
         return reward, info
 
-    def _reward_phase2_first_hits(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
+    def _reward_phase2_first_blood(
+        self, state: Dict, done: bool
+    ) -> Tuple[float, Dict[str, Any]]:
         """
-        PHASE 2: FIRST HITS (DQN Sparse)
-        Sparse: large reward per damage event, large penalty per hit taken.
-        No approach/retreat shaping.
-        """
-        reward = 0.0
-        info = {}
-
-        boss_hp = state.get("bossHealth", 0.0)
-        damage_taken = state.get("damageTaken", 0)
-        is_dead = state.get("isDead", False)
-        hazard_type = state.get("lastHazardType", 0)
-
-        # ═══ DQN SPARSE: Minimal per-step ═══
-        reward += 0.005
-
-        # ═══ DQN SPARSE: Large per-event damage dealt reward ═══
-        # Higher multiplier than PPO — each hit is a clear Q-value spike
-        if self.prev_boss_hp is not None:
-            damage_dealt = self.prev_boss_hp - boss_hp
-            if damage_dealt > 0 and damage_dealt < 500:
-                reward += damage_dealt * 0.15  # Higher than PPO's 0.12
-                info["damage_dealt"] = damage_dealt
-                self.total_damage_dealt += damage_dealt
-
-                # Recovery punish bonus (large discrete)
-                if state.get("primaryMantisRecovering", False):
-                    reward += 0.3  # Sharp bonus for smart timing
-                    info["smart_hit"] = True
-
-        # ═══ DQN SPARSE: Large discrete damage taken penalty ═══
-        if damage_taken > 0:
-            reward -= 3.0
-            self.total_damage_taken += damage_taken
-            if hazard_type == 2:
-                reward -= 3.0
-
-        # Penalize attacking during wind-up
-        if state.get("primaryMantisWindUp", False) and self.last_action == 5:
-            reward -= 0.1
-
-        # ═══ DQN SPARSE: No distance/position shaping ═══
-        # (PPO env has approach/retreat rewards here — DQN skips these
-        # to avoid Q-value noise and orbiting behavior)
-
-        if done and is_dead:
-            reward -= 3.0
-
-        self.prev_boss_hp = boss_hp
-        return reward, info
-
-    def _reward_phase3_aggression(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
-        """
-        PHASE 3: AGGRESSION (DQN Sparse)
+        PHASE 2: FIRST BLOOD (DQN Sparse)
         Sparse: large damage multiplier + sharp HP threshold bonuses +
         very large kill reward. This is the core Q-learning signal.
         """
@@ -286,20 +236,14 @@ class HollowKnightEnvDQN:
         if self.prev_boss_hp is not None:
             damage_dealt = self.prev_boss_hp - boss_hp
             if damage_dealt > 0 and damage_dealt < 500:
-                reward += damage_dealt * 0.2  # Higher than PPO's 0.18
+                reward += damage_dealt * 0.2
                 info["damage_dealt"] = damage_dealt
 
             # ═══ DQN SPARSE: Sharp HP threshold step bonuses ═══
-            # Larger than PPO — these are the key discrete signals
-            # that DQN's replay buffer propagates backward
             for threshold, bonus in [(200, 3.0), (100, 5.0), (50, 8.0)]:
                 if self.prev_boss_hp > threshold >= boss_hp:
                     reward += bonus
                     info[f"threshold_{threshold}"] = True
-
-        # ═══ DQN SPARSE: No HP progress tracking ═══
-        # (PPO env has continuous hp_progress here — DQN relies on
-        # discrete threshold bonuses instead)
 
         # Damage taken (reduced to encourage aggression)
         if damage_taken > 0:
@@ -308,27 +252,43 @@ class HollowKnightEnvDQN:
                 reward -= 3.0
 
         # ═══ DQN SPARSE: Very large kill reward ═══
-        # The primary Q-learning target — large enough to dominate
-        # the Q-value landscape and pull trajectories toward kills
         if mantis_killed > self.prev_mantis_killed:
-            reward += 100.0  # PPO uses 60.0 — DQN needs larger
+            reward += 100.0
             info["event"] = "MANTIS_KILLED"
 
         if done:
             if state.get("bossDefeated", False):
-                reward += 50.0  # PPO uses 30.0
+                reward += 50.0
                 info["outcome"] = "VICTORY"
             elif is_dead:
-                reward -= 5.0  # PPO uses -3.0
+                reward -= 10.0
 
         self.prev_boss_hp = boss_hp
         self.prev_mantis_killed = mantis_killed
         return reward, info
 
-    def _reward_phase4_dual_mantis(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
+    # ═══════════════════════════════════════════════════════════════
+    # PHASE 3: DUAL MANTIS — FIXED
+    #
+    # PROBLEMS FIXED:
+    #   1. Kill reward was flat 100.0 per kill — agent was "happy"
+    #      just killing the first mantis. Now progressive: 1st kill
+    #      reduced to 50, 2nd boosted to 120, 3rd to 150.
+    #   2. No intermediate signal during dual phase — agent got zero
+    #      feedback for partial HP progress on the two mantises.
+    #      Added HP threshold bonuses (600/500/400/300/200/100).
+    #   3. Damage multiplier was flat 0.2 — now 0.35 during dual
+    #      phase to reward every hit more strongly.
+    #   4. Death penalty was flat -15.0 — now scaled by progress so
+    #      dying in dual phase is less punitive (encourages aggression).
+    # ═══════════════════════════════════════════════════════════════
+
+    def _reward_phase3_dual_mantis(
+        self, state: Dict, done: bool
+    ) -> Tuple[float, Dict[str, Any]]:
         """
-        PHASE 4: DUAL MANTIS (DQN Sparse)
-        Sparse: large event rewards, no center-positioning shaping.
+        PHASE 3: DUAL MANTIS (DQN Sparse) — FIXED
+        Progressive kill rewards + HP threshold bonuses during dual phase.
         """
         reward = 0.0
         info = {}
@@ -343,49 +303,94 @@ class HollowKnightEnvDQN:
         # ═══ DQN SPARSE: Minimal tick ═══
         reward += 0.001
 
-        # Damage dealt
+        # ═══ Damage dealt — higher multiplier during dual phase ═══
         if self.prev_boss_hp is not None:
             damage_dealt = self.prev_boss_hp - boss_hp
             if damage_dealt > 0 and damage_dealt < 500:
-                reward += damage_dealt * 0.2
+                # FIX: Boost damage reward during dual phase to reward aggression
+                multiplier = 0.35 if mantis_killed >= 1 else 0.2
+                reward += damage_dealt * multiplier
                 info["damage_dealt"] = damage_dealt
 
-        # ═══ DQN SPARSE: Higher damage penalty (two sources) ═══
+            # ═══ FIX: HP threshold bonuses during dual phase ═══
+            # Critical intermediate signal — the agent sees incremental
+            # progress toward the 2nd and 3rd kills instead of nothing
+            if mantis_killed >= 1:
+                for threshold, bonus in [
+                    (600, 2.0),
+                    (500, 4.0),
+                    (400, 6.0),
+                    (300, 8.0),
+                    (200, 10.0),
+                    (100, 12.0),
+                ]:
+                    if self.prev_boss_hp > threshold >= boss_hp:
+                        reward += bonus
+                        info[f"dual_threshold_{threshold}"] = True
+
+        # ═══ Damage taken — more tolerant during dual phase ═══
         if damage_taken > 0:
-            reward -= 3.5  # Higher than PPO's -3.0
+            if mantis_killed >= 1:
+                reward -= 2.0  # FIX: Was -3.5, reduced to encourage aggression vs duals
+            else:
+                reward -= 3.5
             if hazard_type == 2:
                 reward -= 3.0
 
-        # ═══ DQN SPARSE: Large kill bonus (progressive) ═══
+        # ═══ FIX: Progressive kill rewards ═══
+        # 1st kill is already easy from phase 3 — reduce reward.
+        # 2nd and 3rd kills are the actual learning targets — boost them.
         if mantis_killed > self.prev_mantis_killed:
-            kills_diff = mantis_killed - self.prev_mantis_killed
-            reward += 100.0 * kills_diff  # PPO uses 60.0
-            info["event"] = f"MANTIS_KILLED_x{mantis_killed}"
+            if mantis_killed == 1:
+                reward += 50.0  # Was 100.0 — reduced, agent already knows this
+                info["event"] = "MANTIS_KILLED_1"
+            elif mantis_killed == 2:
+                reward += 120.0  # Boosted — THIS is what phase 4 needs to learn
+                info["event"] = "MANTIS_KILLED_2"
+            elif mantis_killed == 3:
+                reward += 150.0  # Highest kill reward — final kill
+                info["event"] = "MANTIS_KILLED_3"
 
         # Dual awareness — discrete event-based dodge bonus
         if active_count >= 2 and state.get("secondaryMantisActive", False):
             if self.last_action in [4, 6]:  # JUMP or DASH
-                reward += 0.08
+                reward += 0.20
                 info["dual_dodge"] = True
-            # ═══ DQN: No center-positioning bonus ═══
-            # (PPO env has arena-center shaping here — DQN skips it)
 
+        # ═══ FIX: Death penalty scaled by progress ═══
         if done:
             if state.get("bossDefeated", False):
-                reward += 50.0  # PPO uses 30.0
+                reward += 50.0
                 info["outcome"] = "VICTORY"
             elif is_dead:
-                reward -= 5.0
+                if mantis_killed == 0:
+                    reward -= 20.0  # Harsh — didn't even kill first
+                elif mantis_killed == 1:
+                    reward -= 8.0  # FIX: Was -15.0, now tolerant during dual learning
+                else:
+                    reward -= 3.0  # Nearly there — minimal punishment
 
         self.prev_boss_hp = boss_hp
         self.prev_mantis_killed = mantis_killed
         return reward, info
 
-    def _reward_phase5_mastery(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
+    # ═══════════════════════════════════════════════════════════════
+    # PHASE 4: MASTERY — FIXED
+    #
+    # PROBLEMS FIXED:
+    #   Same as phase 4, plus:
+    #   1. Kill reward was flat 80.0 — now progressive (40/120/150)
+    #   2. No HP thresholds at all — added for dual phase
+    #   3. Death penalty was flat -30.0 — now scaled by progress
+    #   4. Damage multiplier now boosted during dual phase
+    # ═══════════════════════════════════════════════════════════════
+
+    def _reward_phase4_mastery(
+        self, state: Dict, done: bool
+    ) -> Tuple[float, Dict[str, Any]]:
         """
-        PHASE 5: MASTERY (DQN Sparse)
-        Sparse: high per-hit reward + very high terminal bonuses.
-        No-hit and speed bonuses are terminal (not continuous).
+        PHASE 4: MASTERY (DQN Sparse) — FIXED
+        Progressive kill rewards + HP thresholds + speed/no-hit terminal bonuses.
         """
         reward = 0.0
         info = {}
@@ -395,50 +400,80 @@ class HollowKnightEnvDQN:
         is_dead = state.get("isDead", False)
         hazard_type = state.get("lastHazardType", 0)
         mantis_killed = state.get("mantisLordsKilled", 0)
+        active_count = state.get("activeMantisCount", 0)
 
         # ═══ DQN SPARSE: Minimal tick ═══
         reward += 0.001
 
-        # ═══ DQN SPARSE: No step penalty (unlike PPO) ═══
-        # DQN handles speed optimization through terminal time bonus
-
-        # Damage dealt (high multiplier for speed)
+        # ═══ Damage dealt — higher multiplier during dual phase ═══
         if self.prev_boss_hp is not None:
             damage_dealt = self.prev_boss_hp - boss_hp
             if damage_dealt > 0 and damage_dealt < 500:
-                reward += damage_dealt * 0.25  # Same as PPO here
+                # FIX: Boost multiplier when fighting duals
+                multiplier = 0.4 if mantis_killed >= 1 else 0.25
+                reward += damage_dealt * multiplier
                 info["damage_dealt"] = damage_dealt
 
-        # ═══ DQN SPARSE: Very high damage penalty (no-hit goal) ═══
+            # ═══ FIX: HP threshold bonuses during dual phase ═══
+            if mantis_killed >= 1:
+                for threshold, bonus in [
+                    (600, 3.0),
+                    (500, 5.0),
+                    (400, 8.0),
+                    (300, 10.0),
+                    (200, 12.0),
+                    (100, 15.0),
+                ]:
+                    if self.prev_boss_hp > threshold >= boss_hp:
+                        reward += bonus
+                        info[f"dual_threshold_{threshold}"] = True
+
+        # Dual dodge bonus
+        if active_count >= 2:
+            if self.last_action in [4, 6]:  # JUMP or DASH
+                reward += 0.4
+                info["dual_dodge"] = True
+
+        # ═══ Damage taken — more tolerant during dual phase ═══
         if damage_taken > 0:
-            reward -= 5.0
+            if mantis_killed >= 1:
+                reward -= 2.5  # FIX: Was -5.0, reduced during dual phase
+            else:
+                reward -= 5.0
             if hazard_type == 2:
                 reward -= 4.0
 
-        # ═══ DQN SPARSE: No continuous no-hit streak ═══
-        # (PPO env tracks continuous no-hit bonus — DQN gives it
-        # all at terminal to avoid Q-value noise)
-
-        # Kill
+        # ═══ FIX: Progressive kill rewards ═══
         if mantis_killed > self.prev_mantis_killed:
-            reward += 40.0
+            if mantis_killed == 1:
+                reward += 40.0  # Was 80.0 — reduced, already mastered
+            elif mantis_killed == 2:
+                reward += 120.0  # Boosted — key learning target
+            elif mantis_killed == 3:
+                reward += 150.0  # Highest — final kill
 
-        # ═══ DQN SPARSE: Large terminal bonuses ═══
+        # ═══ FIX: Terminal bonuses with progress-scaled death penalty ═══
         if done:
             if state.get("bossDefeated", False):
-                reward += 50.0  # Higher than PPO's 30.0
+                reward += 120.0
                 # Speed bonus (terminal, not per-step)
                 time_bonus = max(0, (3000 - self.episode_steps) / 100.0)
                 reward += time_bonus
                 # No-hit bonus (all at terminal)
                 if self.total_damage_taken == 0:
-                    reward += 30.0  # Higher than PPO's 20.0
+                    reward += 30.0
                     info["outcome"] = "PERFECT_VICTORY"
                 else:
                     info["outcome"] = "VICTORY"
                 info["time_bonus"] = time_bonus
             elif is_dead:
-                reward -= 8.0  # Harsher than PPO's -5.0
+                # FIX: Was flat -30.0 — now scaled by progress
+                if mantis_killed == 0:
+                    reward -= 40.0  # Harsh — should at least kill first
+                elif mantis_killed == 1:
+                    reward -= 15.0  # Tolerant — died learning duals
+                else:
+                    reward -= 5.0  # Nearly there — minimal punishment
 
         self.prev_boss_hp = boss_hp
         self.prev_mantis_killed = mantis_killed

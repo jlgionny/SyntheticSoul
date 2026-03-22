@@ -81,12 +81,14 @@ class KillBuffer:
         self.episodes = deque(maxlen=max_episodes)
 
     def add_episode(self, states: list, actions: list, rewards: list, dones: list):
-        self.episodes.append({
-            'states': np.array(states),
-            'actions': np.array(actions),
-            'rewards': np.array(rewards, dtype=np.float32),
-            'dones': np.array(dones, dtype=np.float32),
-        })
+        self.episodes.append(
+            {
+                "states": np.array(states),
+                "actions": np.array(actions),
+                "rewards": np.array(rewards, dtype=np.float32),
+                "dones": np.array(dones, dtype=np.float32),
+            }
+        )
 
     def sample(self) -> dict:
         return random.choice(self.episodes)
@@ -108,8 +110,8 @@ class PPOAgent:
         hidden_size: int = 384,
         use_lstm: bool = True,
         learning_rate: float = 1e-4,
-        lr_end_factor: float = 0.3,       # LR finale = lr * lr_end_factor
-        total_episodes: int = 1000,        # Per calcolare il decay del LR
+        lr_end_factor: float = 0.3,  # LR finale = lr * lr_end_factor
+        total_episodes: int = 1000,  # Per calcolare il decay del LR
         gamma: float = 0.995,
         gae_lambda: float = 0.95,
         policy_clip: float = 0.2,
@@ -146,15 +148,17 @@ class PPOAgent:
             self.optimizer,
             lr_lambda=lambda ep: max(
                 lr_end_factor,
-                1.0 - (1.0 - lr_end_factor) * (ep / max(total_episodes, 1))
-            )
+                1.0 - (1.0 - lr_end_factor) * (ep / max(total_episodes, 1)),
+            ),
         )
 
         self.buffer = ReplayBuffer()
         self.kill_buffer = KillBuffer(max_episodes=30)
 
         print(f"[PPO] Initialized on {self.device}")
-        print(f"[PPO] LSTM: {use_lstm} | LR: {learning_rate} -> {learning_rate * lr_end_factor}")
+        print(
+            f"[PPO] LSTM: {use_lstm} | LR: {learning_rate} -> {learning_rate * lr_end_factor}"
+        )
         print(f"[PPO] Entropy: {entropy_coef} (dynamic, set by training loop)")
         print(f"[PPO] Kill Buffer: max 30 episodes")
 
@@ -305,10 +309,10 @@ class PPOAgent:
             )
 
         episode = self.kill_buffer.sample()
-        states = torch.FloatTensor(episode['states']).to(self.device)
-        actions = torch.LongTensor(episode['actions']).to(self.device)
-        rewards = torch.FloatTensor(episode['rewards']).to(self.device)
-        dones = torch.FloatTensor(episode['dones']).to(self.device)
+        states = torch.FloatTensor(episode["states"]).to(self.device)
+        actions = torch.LongTensor(episode["actions"]).to(self.device)
+        rewards = torch.FloatTensor(episode["rewards"]).to(self.device)
+        dones = torch.FloatTensor(episode["dones"]).to(self.device)
 
         if len(states) < 2:
             return None
@@ -340,7 +344,10 @@ class PPOAgent:
 
                 ratio = torch.exp(log_probs - b_old_lp)
                 surr1 = ratio * b_adv
-                surr2 = torch.clamp(ratio, 1 - self.policy_clip, 1 + self.policy_clip) * b_adv
+                surr2 = (
+                    torch.clamp(ratio, 1 - self.policy_clip, 1 + self.policy_clip)
+                    * b_adv
+                )
                 actor_loss = -torch.min(surr1, surr2).mean()
 
                 values_sq = values.squeeze(-1)
@@ -370,7 +377,7 @@ class PPOAgent:
 
     def get_current_lr(self) -> float:
         """Ritorna il LR attuale."""
-        return self.optimizer.param_groups[0]['lr']
+        return self.optimizer.param_groups[0]["lr"]
 
     def reset_hidden(self):
         self.policy.reset_hidden()
