@@ -19,6 +19,7 @@ import numpy as np
 # V1 — 34 FEATURES
 # ═══════════════════════════════════════════════════════════════
 
+
 def preprocess_state_v1(state_dict: dict) -> np.ndarray:
     features = []
 
@@ -81,6 +82,7 @@ def preprocess_state_v1(state_dict: dict) -> np.ndarray:
 # V2 — 51 FEATURES (V1 + 17 attack pattern features)
 # ═══════════════════════════════════════════════════════════════
 
+
 def preprocess_state_v2(state_dict: dict) -> np.ndarray:
     base = preprocess_state_v1(state_dict)
     pattern_features = []
@@ -95,8 +97,12 @@ def preprocess_state_v2(state_dict: dict) -> np.ndarray:
     pattern_features.append(float(state_dict.get("primaryMantisRecovering", False)))
 
     # Primary velocity (2)
-    pattern_features.append(np.clip(state_dict.get("primaryMantisVelX", 0.0) / 25.0, -1.0, 1.0))
-    pattern_features.append(np.clip(state_dict.get("primaryMantisVelY", 0.0) / 25.0, -1.0, 1.0))
+    pattern_features.append(
+        np.clip(state_dict.get("primaryMantisVelX", 0.0) / 25.0, -1.0, 1.0)
+    )
+    pattern_features.append(
+        np.clip(state_dict.get("primaryMantisVelY", 0.0) / 25.0, -1.0, 1.0)
+    )
 
     # Secondary mantis (2)
     sec_pattern = state_dict.get("secondaryMantisPattern", 0)
@@ -114,17 +120,27 @@ def preprocess_state_v2(state_dict: dict) -> np.ndarray:
 # SELETTORI
 # ═══════════════════════════════════════════════════════════════
 
+
 def preprocess_state(state_dict: dict, version: int = 2) -> np.ndarray:
-    return preprocess_state_v1(state_dict) if version == 1 else preprocess_state_v2(state_dict)
+    return (
+        preprocess_state_v1(state_dict)
+        if version == 1
+        else preprocess_state_v2(state_dict)
+    )
 
 
 def preprocess_state_compat(state_dict: dict, target_dim: int) -> np.ndarray:
-    return preprocess_state_v1(state_dict) if target_dim <= STATE_DIM_V1 else preprocess_state_v2(state_dict)
+    return (
+        preprocess_state_v1(state_dict)
+        if target_dim <= STATE_DIM_V1
+        else preprocess_state_v2(state_dict)
+    )
 
 
 # ═══════════════════════════════════════════════════════════════
 # PATTERN REWARD BONUS
 # ═══════════════════════════════════════════════════════════════
+
 
 def compute_pattern_reward_bonus(state_dict: dict, action: int) -> float:
     bonus = 0.0
@@ -165,8 +181,10 @@ def compute_pattern_reward_bonus(state_dict: dict, action: int) -> float:
 STATE_DIM_V1 = 34
 STATE_DIM_V2 = 51
 
+
 def get_state_dim(version: int = 2) -> int:
     return STATE_DIM_V1 if version == 1 else STATE_DIM_V2
+
 
 def get_stacked_dim(version: int = 2, stack_size: int = 4) -> int:
     return get_state_dim(version) * stack_size

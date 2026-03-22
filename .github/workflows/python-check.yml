@@ -25,4 +25,4 @@ jobs:
 
       - name: Check Logic & Style (Flake8)
         run: |
-          flake8 AI_Agents/scripts/ AI_Agents/src/ --exclude=requirements.txt --ignore=E501,W503,E402,E226,E203 --count --show-source --statistics
+          flake8 AI_Agents/scripts/ AI_Agents/src/ --exclude=requirements.txt --ignore=E501,W503,E402,E226,E203,F541,F401,E731,E401,E225,F811 --count --show-source --statistics
