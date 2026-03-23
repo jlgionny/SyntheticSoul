@@ -291,19 +291,17 @@ class HallOfFame:
 
 PHASE_CONFIGS = {
     1: {
-        "name": "SURVIVAL",
+        "name": "SURVIVE",
         "description": "Learn to dodge and not die",
         "episodes": 1000,
-        # ═══ PPO-SPECIFIC hyperparameters ═══
-        "lr": 3e-4,                     # PPO tolerates higher LR
-        "lr_end_factor": 0.3,           # Cosine decay to 30% of initial
-        "entropy_start": 0.08,          # High initial exploration
-        "entropy_end": 0.03,            # Maintain some exploration
-        "gae_lambda": 0.95,             # Standard GAE λ
-        "n_epochs": 4,                  # PPO epochs per update
-        "batch_size": 64,               # Mini-batch size
-        "update_interval": 256,         # Steps between PPO updates
-        # Common
+        "lr": 3e-4,
+        "lr_end_factor": 0.3,
+        "entropy_start": 0.08,
+        "entropy_end": 0.03,
+        "gae_lambda": 0.95,
+        "n_epochs": 4,
+        "batch_size": 64,
+        "update_interval": 256,
         "gamma": 0.99,
         "use_pattern_bonus": True,
         "preprocess_version": 2,
@@ -311,29 +309,11 @@ PHASE_CONFIGS = {
         "promotion_avg_window": 25,
     },
     2: {
-        "name": "FIRST HITS",
-        "description": "Learn to punish during recovery windows",
-        "episodes": 1000,
-        "lr": 2e-4,
-        "lr_end_factor": 0.3,
-        "entropy_start": 0.06,
-        "entropy_end": 0.02,
-        "gae_lambda": 0.95,
-        "n_epochs": 4,
-        "batch_size": 64,
-        "update_interval": 256,
-        "gamma": 0.995,
-        "use_pattern_bonus": True,
-        "preprocess_version": 2,
-        "promotion_condition": "avg_damage_dealt >= 250",
-        "promotion_avg_window": 25,
-    },
-    3: {
-        "name": "AGGRESSION",
-        "description": "Kill the first mantis",
-        "episodes": 1200,
+        "name": "FIRST BLOOD",
+        "description": "Deal damage and kill the first mantis",
+        "episodes": 1500,
         "lr": 1.5e-4,
-        "lr_end_factor": 0.2,           # No LR decay in aggression phase
+        "lr_end_factor": 0.2,
         "entropy_start": 0.05,
         "entropy_end": 0.005,
         "gae_lambda": 0.95,
@@ -346,40 +326,40 @@ PHASE_CONFIGS = {
         "promotion_condition": "avg_mantis_killed >= 0.8",
         "promotion_avg_window": 30,
     },
-    4: {
+    3: {
         "name": "DUAL MANTIS",
         "description": "Handle two mantises at once",
         "episodes": 2000,
-        "lr": 5e-5,                      # MODIFICA: warm restart (era 1e-4, decayed a 2e-5)
-        "lr_end_factor": 0.25,           # MODIFICA: decay meno aggressivo (era 0.2)
-        "entropy_start": 0.03,           # MODIFICA: warm restart esplorazione (era 0.06→0.01)
-        "entropy_end": 0.005,            # MODIFICA: minimo leggermente più alto (era 0.01)
+        "lr": 5e-5,
+        "lr_end_factor": 0.25,
+        "entropy_start": 0.03,
+        "entropy_end": 0.005,
         "gae_lambda": 0.95,
         "n_epochs": 4,
         "batch_size": 64,
-        "update_interval": 384,          # MODIFICA: tra 256 e 512 per update più frequenti
+        "update_interval": 384,
         "gamma": 0.995,
         "use_pattern_bonus": True,
         "preprocess_version": 2,
-        "promotion_condition": "avg_mantis_killed >= 1.8",  # MODIFICA: rilassata da 2.0
-        "promotion_avg_window": 40,      # MODIFICA: finestra più larga da 30
+        "promotion_condition": "avg_mantis_killed >= 1.5",
+        "promotion_avg_window": 40,
     },
-    5: {
+    4: {
         "name": "MASTERY",
         "description": "Full victory, optimize time and no-hit",
-        "episodes": 1500,
-        "lr": 5e-5,                     # Very low for fine-tuning
-        "lr_end_factor": 0.2,
-        "entropy_start": 0.03,
-        "entropy_end": 0.005,
-        "gae_lambda": 0.97,             # Higher λ for long-horizon mastery
-        "n_epochs": 6,                  # More epochs for fine-tuning
+        "episodes": 2000,
+        "lr": 5e-5,                     # Identico a fase 3
+        "lr_end_factor": 0.25,          # Identico a fase 3
+        "entropy_start": 0.03,          # Identico a fase 3
+        "entropy_end": 0.005,           # Identico a fase 3
+        "gae_lambda": 0.95,             # Identico a fase 3 (era 0.97 — destabilizzava)
+        "n_epochs": 4,                  # Identico a fase 3 (era 6 — troppo aggressivo)
         "batch_size": 64,
-        "update_interval": 512,         # Longer rollouts for mastery
-        "gamma": 0.998,
+        "update_interval": 384,         # Identico a fase 3 (era 512 — troppo raro)
+        "gamma": 0.995,                 # Identico a fase 3 (era 0.998 — troppo far-sighted)
         "use_pattern_bonus": True,
         "preprocess_version": 2,
-        "promotion_condition": "win_rate >= 0.5",
+        "promotion_condition": "avg_mantis_killed >= 2.5",
         "promotion_avg_window": 50,
     },
 }
@@ -751,7 +731,7 @@ def run_all_phases(
     ports: List[int],
     base_dir: str,
     start_phase: int = 1,
-    end_phase: int = 5,
+    end_phase: int = 4,
     pretrained_path: Optional[str] = None,
     auto_promote: bool = True,
     sync_interval: int = 15,
@@ -814,7 +794,7 @@ def run_all_phases(
 #  4. Salva il vincitore come champion.pth + champion.json
 # ═══════════════════════════════════════════════════════════════
 
-def select_champion(checkpoint_dir: str, phase: int = 5, n_instances: int = 3) -> Optional[str]:
+def select_champion(checkpoint_dir: str, phase: int = 4, n_instances: int = 3) -> Optional[str]:
     """
     Trova il miglior modello tra tutte le istanze di una fase.
     Restituisce il percorso del champion.pth salvato.
@@ -980,7 +960,7 @@ def collect_all_champions(checkpoint_dir: str, n_instances: int = 3):
     """
     # Check se esistono cartelle di fasi
     existing_phases = []
-    for phase in range(1, 6):
+    for phase in range(1, 5):
         phase_dir = os.path.join(checkpoint_dir, f"phase_{phase}")
         if os.path.exists(phase_dir):
             existing_phases.append(phase)
@@ -1035,8 +1015,13 @@ def collect_all_champions(checkpoint_dir: str, n_instances: int = 3):
         print(f"    Phase {phase} ({name:>12}): {reward_str} | Inst {inst} | run {runs}")
         print(f"      → python play_ppo.py --model {champ_path}")
 
-    # Segnala il champion globale (fase 5 se esiste, altrimenti la più alta)
-    global_champ = os.path.join(champion_dir, "phase_5_champion.pth")
+
+    global_champ = None
+    for phase in [4, 3, 2, 1]:
+        candidate = os.path.join(champion_dir, f"phase_{phase}_champion.pth")
+        if os.path.exists(candidate):
+            global_champ = candidate
+            break
     if not os.path.exists(global_champ):
         # Prendi la fase più alta disponibile
         for phase in [5, 4, 3, 2, 1]:
@@ -1073,7 +1058,7 @@ Examples:
     parser.add_argument("--instances", type=int, default=1)
     parser.add_argument("--ports", type=int, nargs="+", default=[5555])
     parser.add_argument("--start-phase", type=int, default=1)
-    parser.add_argument("--end-phase", type=int, default=5)
+    parser.add_argument("--end-phase", type=int, default=4)
     parser.add_argument("--phase", type=int, default=None, help="Run ONLY this phase")
     parser.add_argument("--pretrained", type=str, default=None)
     parser.add_argument("--output", type=str, default="training_output_ppo")

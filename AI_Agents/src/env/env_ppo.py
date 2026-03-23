@@ -38,11 +38,10 @@ class HollowKnightEnvPPO:
     a meaningful gradient signal.
 
     TRAINING PHASES (identical to DQN env):
-      1 - SURVIVAL:      Learn to dodge, move, not die
-      2 - FIRST HITS:    Learn to punish during recovery windows
-      3 - AGGRESSION:    Maximize DPS, kill first mantis
-      4 - DUAL MANTIS:   Handle two mantises simultaneously
-      5 - MASTERY:       Full victory, optimize time & no-hit
+      1 - SURVIVE:       Learn to dodge, move, not die
+      2 - FIRST BLOOD:   Deal damage and kill the first mantis
+      3 - DUAL MANTIS:   Handle two mantises simultaneously
+      4 - MASTERY:       Full victory, optimize time & no-hit
     """
 
     # ═══ ACTION SPACE — Identical across PPO/DQN ═══
@@ -93,8 +92,8 @@ class HollowKnightEnvPPO:
         self.episode_steps = 0
 
         phase_names = {
-            1: "SURVIVAL", 2: "FIRST HITS", 3: "AGGRESSION",
-            4: "DUAL MANTIS", 5: "MASTERY"
+            1: "SURVIVE", 2: "FIRST BLOOD",
+            3: "DUAL MANTIS", 4: "MASTERY"
         }
         print(f"[EnvPPO] Initialized — PHASE {phase}: {phase_names.get(phase, '?')}")
         print(f"         Host: {host}:{port} | Reward Scale: 1/{self.reward_scale}")
@@ -146,15 +145,11 @@ class HollowKnightEnvPPO:
         if self.phase == 1:
             return self._reward_phase1_survive(state, done)
         elif self.phase == 2:
-            return self._reward_phase2_first_hits(state, done)
-        elif self.phase == 3:
-            return self._reward_phase3_aggression(state, done)
-        elif self.phase == 4:
-            return self._reward_phase4_dual_mantis(state, done)
-        elif self.phase == 5:
-            return self._reward_phase5_mastery(state, done)
+            return self._reward_phase2_first_blood(state, done)
+        elif self.phase in (3, 4):
+            return self._reward_phase3_dual_mantis(state, done)
         else:
-            return self._reward_phase3_aggression(state, done)
+            return self._reward_phase2_first_blood(state, done)
 
     # ─── Shared dense shaping utilities (PPO-only) ───
 
@@ -240,65 +235,7 @@ class HollowKnightEnvPPO:
 
         return reward, info
 
-    def _reward_phase2_first_hits(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
-        reward = 0.0
-        info = {}
-
-        boss_hp = state.get("bossHealth", 0.0)
-        current_player_hp = state.get("playerHealth", 9)  # <--- FIX: Leggiamo la vita attuale
-        is_dead = state.get("isDead", False)
-        hazard_type = state.get("lastHazardType", 0)
-        boss_recovering = state.get("primaryMantisRecovering", False)
-        boss_windup = state.get("primaryMantisWindUp", False)
-        boss_attacking = state.get("primaryMantisActive", False)
-
-        # Calcolo HP persi per sostituire damage_taken cumulativo
-        hp_lost = 0
-        if hasattr(self, 'prev_player_hp') and self.prev_player_hp is not None:
-            hp_lost = max(0, self.prev_player_hp - current_player_hp)
-
-        reward += 0.01
-        safe = boss_recovering or (not boss_attacking and not boss_windup)
-        reward += self._distance_shaping(state, safe_to_approach=safe)
-        reward += self._dodge_streak_bonus(hp_lost, boss_attacking) # Usiamo hp_lost per azzerare la streak
-
-        # Danni inflitti
-        if self.prev_boss_hp is not None:
-            damage_dealt = self.prev_boss_hp - boss_hp
-            if damage_dealt > 0 and damage_dealt < 500:
-                reward += damage_dealt * 0.12
-                info["damage_dealt"] = damage_dealt
-                self.total_damage_dealt += damage_dealt
-
-                if boss_recovering:
-                    reward += 0.25
-                    info["smart_hit"] = True
-
-        # FIX CRITICO: Malus per i danni subiti calcolato sul Delta HP
-        if hp_lost > 0:
-            reward -= (2.5 * hp_lost)
-            self.total_damage_taken += hp_lost
-            if hazard_type == 2:
-                reward -= 2.5
-
-        # Penalizza chi attacca mentre il boss sta caricando un colpo (windup)
-        if boss_windup and self.last_action == 5:
-            reward -= 0.1
-
-        dist = state.get("distanceToBoss", 50.0)
-        if self.last_action == 5 and boss_recovering and dist < 10.0:
-            reward += 0.1
-            info["optimal_attack_position"] = True
-
-        if done and is_dead:
-            reward -= 2.0
-
-        # Aggiornamento stato
-        self.prev_boss_hp = boss_hp
-        self.prev_player_hp = current_player_hp # <--- FIX: Salviamo la vita per il frame successivo
-        return reward, info
-
-    def _reward_phase3_aggression(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
+    def _reward_phase2_first_blood(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
         reward = 0.0
         info = {}
 
@@ -391,10 +328,10 @@ class HollowKnightEnvPPO:
 
         return reward, info
 
-    def _reward_phase4_dual_mantis(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
+    def _reward_phase3_dual_mantis(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
         """
         ═══════════════════════════════════════════════════════════════
-        FASE 4 v2 — DUAL MANTIS (Riscritta post-analisi plateau)
+        FASE 3 v2 — DUAL MANTIS (Riscritta post-analisi plateau)
 
         PROBLEMI RISOLTI:
         ● L'agente si fermava a 1 kill perché il reward 1v1 vs 2v1
@@ -411,7 +348,7 @@ class HollowKnightEnvPPO:
         2. Kill reward ribilanciato: 1st kill = 35, 2nd kill = 85
         3. Danno inflitto scala 1.5× dopo la prima kill
         4. Penalità danno ridotta nel 2v1 (-3.0 vs -4.0)
-        5. Delta HP per danni subiti (come fasi 2/3)
+        5. Delta HP per danni subiti (come fasi precedenti)
         6. Telegraph awareness + anti-stall
         7. Threshold bonus per HP nel 2v1
         8. Vittoria bonus aumentato a 50
@@ -541,75 +478,37 @@ class HollowKnightEnvPPO:
         # ─── 8. TERMINAL REWARDS ───
         if done:
             if state.get("bossDefeated", False):
-                reward += 50.0  # Aumentato da 30
-                # Time bonus: premia vittorie veloci
-                time_bonus = max(0, (3000 - self.episode_steps) / 200.0)
-                reward += time_bonus
-                info["outcome"] = "VICTORY"
-                info["time_bonus"] = time_bonus
+                if self.phase == 4:
+                    # MASTERY: victory bonus potenziato + no-hit bonus
+                    reward += 100.0
+                    time_bonus = max(0, (2500 - self.episode_steps) / 100.0)
+                    reward += time_bonus
+                    if self.total_damage_taken == 0:
+                        reward += 40.0
+                        info["outcome"] = "PERFECT_VICTORY"
+                    elif self.total_damage_taken <= 2:
+                        reward += 20.0
+                        info["outcome"] = "NEAR_PERFECT"
+                    else:
+                        info["outcome"] = "VICTORY"
+                    info["time_bonus"] = time_bonus
+                else:
+                    # DUAL MANTIS: reward standard
+                    reward += 50.0
+                    time_bonus = max(0, (3000 - self.episode_steps) / 200.0)
+                    reward += time_bonus
+                    info["outcome"] = "VICTORY"
+                    info["time_bonus"] = time_bonus
             elif is_dead:
                 if in_dual_phase:
-                    reward -= 2.0  # Morte nel 2v1 meno punita (era -3.0)
+                    reward -= 2.0
                 else:
-                    reward -= 3.5  # Morte nel 1v1 più punita (non dovrebbe succedere)
+                    reward -= 3.5
 
         # Update per frame successivo
         self.prev_boss_hp = boss_hp
         self.prev_mantis_killed = mantis_killed
         self.prev_player_hp = current_player_hp
-        return reward, info
-
-    def _reward_phase5_mastery(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
-        reward = 0.0
-        info = {}
-
-        boss_hp = state.get("bossHealth", 0.0)
-        damage_taken = state.get("damageTaken", 0)
-        is_dead = state.get("isDead", False)
-        hazard_type = state.get("lastHazardType", 0)
-        mantis_killed = state.get("mantisLordsKilled", 0)
-        boss_recovering = state.get("primaryMantisRecovering", False)
-
-        reward += 0.002
-        reward -= 0.001 * (self.episode_steps / 1000.0)
-
-        safe = boss_recovering
-        reward += self._distance_shaping(state, safe_to_approach=safe) * 1.5
-
-        if self.prev_boss_hp is not None:
-            damage_dealt = self.prev_boss_hp - boss_hp
-            if damage_dealt > 0 and damage_dealt < 500:
-                reward += damage_dealt * 0.22
-                info["damage_dealt"] = damage_dealt
-
-        if damage_taken > 0:
-            reward -= 4.0
-            if hazard_type == 2:
-                reward -= 3.5
-
-        if damage_taken == 0 and self.episode_steps > 100:
-            no_hit_bonus = min(0.03, self.episode_steps * 0.00002)
-            reward += no_hit_bonus
-
-        if mantis_killed > self.prev_mantis_killed:
-            reward += 30.0
-
-        if done:
-            if state.get("bossDefeated", False):
-                reward += 30.0
-                time_bonus = max(0, (3000 - self.episode_steps) / 150.0)
-                reward += time_bonus
-                if self.total_damage_taken == 0:
-                    reward += 20.0
-                    info["outcome"] = "PERFECT_VICTORY"
-                else:
-                    info["outcome"] = "VICTORY"
-                info["time_bonus"] = time_bonus
-            elif is_dead:
-                reward -= 5.0
-
-        self.prev_boss_hp = boss_hp
-        self.prev_mantis_killed = mantis_killed
         return reward, info
 
     def reset(self) -> Dict:
