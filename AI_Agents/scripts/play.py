@@ -141,10 +141,16 @@ def load_env(agent_type: str, port: int):
     """Carica l'environment corretto per il tipo di agente."""
     if agent_type == "ppo":
         from env_ppo import HollowKnightEnvPPO
-        return HollowKnightEnvPPO(host="localhost", port=port, phase=4, reward_scale=5.0)
+
+        return HollowKnightEnvPPO(
+            host="localhost", port=port, phase=4, reward_scale=5.0
+        )
     else:
         from env_dqn import HollowKnightEnvDQN
-        return HollowKnightEnvDQN(host="localhost", port=port, phase=4, reward_scale=5.0)
+
+        return HollowKnightEnvDQN(
+            host="localhost", port=port, phase=4, reward_scale=5.0
+        )
 
 
 # ═══════════════════════════════════════════════════════════════

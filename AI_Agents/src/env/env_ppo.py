@@ -95,10 +95,7 @@ class HollowKnightEnvPPO:
         self.total_damage_taken = 0
         self.episode_steps = 0
 
-        phase_names = {
-            1: "SURVIVE", 2: "FIRST BLOOD",
-            3: "DUAL MANTIS", 4: "MASTERY"
-        }
+        phase_names = {1: "SURVIVE", 2: "FIRST BLOOD", 3: "DUAL MANTIS", 4: "MASTERY"}
         print(f"[EnvPPO] Initialized — PHASE {phase}: {phase_names.get(phase, '?')}")
         print(f"         Host: {host}:{port} | Reward Scale: 1/{self.reward_scale}")
         print(f"         Mode: DENSE rewards (PPO-optimized)")
@@ -242,7 +239,9 @@ class HollowKnightEnvPPO:
 
         return reward, info
 
-    def _reward_phase2_first_blood(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
+    def _reward_phase2_first_blood(
+        self, state: Dict, done: bool
+    ) -> Tuple[float, Dict[str, Any]]:
         reward = 0.0
         info = {}
 
@@ -338,7 +337,9 @@ class HollowKnightEnvPPO:
 
         return reward, info
 
-    def _reward_phase3_dual_mantis(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
+    def _reward_phase3_dual_mantis(
+        self, state: Dict, done: bool
+    ) -> Tuple[float, Dict[str, Any]]:
         """
         ═══════════════════════════════════════════════════════════════
         FASE 3 v2 — DUAL MANTIS (Riscritta post-analisi plateau)

@@ -883,7 +883,10 @@ def run_all_phases(
 #  4. Salva il vincitore come champion.pth + champion.json
 # ═══════════════════════════════════════════════════════════════
 
-def select_champion(checkpoint_dir: str, phase: int = 4, n_instances: int = 3) -> Optional[str]:
+
+def select_champion(
+    checkpoint_dir: str, phase: int = 4, n_instances: int = 3
+) -> Optional[str]:
     """
     Trova il miglior modello tra tutte le istanze di una fase.
     Restituisce il percorso del champion.pth salvato.
@@ -1121,7 +1124,6 @@ def collect_all_champions(checkpoint_dir: str, n_instances: int = 3):
             f"    Phase {phase} ({name:>12}): {reward_str} | Inst {inst} | run {runs}"
         )
         print(f"      → python play_ppo.py --model {champ_path}")
-
 
     global_champ = None
     for phase in [4, 3, 2, 1]:
