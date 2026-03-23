@@ -341,14 +341,10 @@ class HallOfFame:
 PHASE_CONFIGS = {
     1: {
         "name": "SURVIVE",
-        "name": "SURVIVE",
         "description": "Learn to dodge and not die",
         "episodes": 1000,
         "lr": 3e-4,
-        "lr": 3e-4,
         "lr_end_factor": 0.3,
-        "entropy_start": 0.08,
-        "entropy_end": 0.03,
         "entropy_start": 0.08,
         "entropy_end": 0.03,
         "gae_lambda": 0.95,
@@ -356,10 +352,8 @@ PHASE_CONFIGS = {
         "batch_size": 64,
         "update_interval": 256,
         "gamma": 0.99,
-        "gamma": 0.99,
         "use_pattern_bonus": True,
         "preprocess_version": 2,
-        "promotion_condition": "avg_survival_steps >= 850",
         "promotion_condition": "avg_survival_steps >= 850",
         "promotion_avg_window": 25,
     },
@@ -367,12 +361,7 @@ PHASE_CONFIGS = {
         "name": "FIRST BLOOD",
         "description": "Deal damage and kill the first mantis",
         "episodes": 1500,
-    2: {
-        "name": "FIRST BLOOD",
-        "description": "Deal damage and kill the first mantis",
-        "episodes": 1500,
         "lr": 1.5e-4,
-        "lr_end_factor": 0.2,
         "lr_end_factor": 0.2,
         "entropy_start": 0.05,
         "entropy_end": 0.005,
@@ -387,14 +376,9 @@ PHASE_CONFIGS = {
         "promotion_avg_window": 30,
     },
     3: {
-    3: {
         "name": "DUAL MANTIS",
         "description": "Handle two mantises at once",
         "episodes": 2000,
-        "lr": 5e-5,
-        "lr_end_factor": 0.25,
-        "entropy_start": 0.03,
-        "entropy_end": 0.005,
         "lr": 5e-5,
         "lr_end_factor": 0.25,
         "entropy_start": 0.03,
@@ -403,32 +387,27 @@ PHASE_CONFIGS = {
         "n_epochs": 4,
         "batch_size": 64,
         "update_interval": 384,
-        "update_interval": 384,
         "gamma": 0.995,
         "use_pattern_bonus": True,
         "preprocess_version": 2,
         "promotion_condition": "avg_mantis_killed >= 1.5",
         "promotion_avg_window": 40,
-        "promotion_condition": "avg_mantis_killed >= 1.5",
-        "promotion_avg_window": 40,
     },
-    4: {
     4: {
         "name": "MASTERY",
         "description": "Full victory, optimize time and no-hit",
         "episodes": 2000,
-        "lr": 5e-5,                     # Identico a fase 3
-        "lr_end_factor": 0.25,          # Identico a fase 3
-        "entropy_start": 0.03,          # Identico a fase 3
-        "entropy_end": 0.005,           # Identico a fase 3
-        "gae_lambda": 0.95,             # Identico a fase 3 (era 0.97 — destabilizzava)
-        "n_epochs": 4,                  # Identico a fase 3 (era 6 — troppo aggressivo)
+        "lr": 5e-5,
+        "lr_end_factor": 0.25,
+        "entropy_start": 0.03,
+        "entropy_end": 0.005,
+        "gae_lambda": 0.95,
+        "n_epochs": 4,
         "batch_size": 64,
-        "update_interval": 384,         # Identico a fase 3 (era 512 — troppo raro)
-        "gamma": 0.995,                 # Identico a fase 3 (era 0.998 — troppo far-sighted)
+        "update_interval": 384,
+        "gamma": 0.995,
         "use_pattern_bonus": True,
         "preprocess_version": 2,
-        "promotion_condition": "avg_mantis_killed >= 2.5",
         "promotion_condition": "avg_mantis_killed >= 2.5",
         "promotion_avg_window": 50,
     },
@@ -636,7 +615,6 @@ def train_ppo_instance(
             # Extra replay per episodi 2+ kill (la risorsa più preziosa)
             if ep_mantis_killed >= 2:
                 agent.learn_from_kills()
-                agent.learn_from_kills()
                 print(f"  [PPO {instance_id}] ★ EXTRA REPLAY per 2-kill episode")
 
         if num_updates > 0:
@@ -663,7 +641,6 @@ def train_ppo_instance(
             if len(ep_transitions) >= 10:
                 states_t, actions_t, rewards_t, dones_t = zip(*ep_transitions)
                 # Salva 2 volte per sovrappesare nel buffer
-                agent.kill_buffer.add_episode(states_t, actions_t, rewards_t, dones_t)
                 agent.kill_buffer.add_episode(states_t, actions_t, rewards_t, dones_t)
                 print(
                     f"  [PPO {instance_id}] ★★ MULTI-KILL x{mantis_killed} saved 2× to buffer ({len(agent.kill_buffer)} stored)"
@@ -843,7 +820,6 @@ def run_all_phases(
     ports: List[int],
     base_dir: str,
     start_phase: int = 1,
-    end_phase: int = 4,
     end_phase: int = 4,
     pretrained_path: Optional[str] = None,
     auto_promote: bool = True,
@@ -1088,7 +1064,6 @@ def collect_all_champions(checkpoint_dir: str, n_instances: int = 3):
     # Check se esistono cartelle di fasi
     existing_phases = []
     for phase in range(1, 5):
-    for phase in range(1, 5):
         phase_dir = os.path.join(checkpoint_dir, f"phase_{phase}")
         if os.path.exists(phase_dir):
             existing_phases.append(phase)
@@ -1190,7 +1165,6 @@ Examples:
     parser.add_argument("--instances", type=int, default=1)
     parser.add_argument("--ports", type=int, nargs="+", default=[5555])
     parser.add_argument("--start-phase", type=int, default=1)
-    parser.add_argument("--end-phase", type=int, default=4)
     parser.add_argument("--end-phase", type=int, default=4)
     parser.add_argument("--phase", type=int, default=None, help="Run ONLY this phase")
     parser.add_argument("--pretrained", type=str, default=None)
