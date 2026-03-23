@@ -45,62 +45,64 @@ REWARD_SCALE_FACTOR = 5.0
 
 # Modern color palette
 C = {
-    "dqn":       "#0ea5e9",   # Sky blue
-    "ppo":       "#c026d3",   # Fuchsia
-    "reward":    "#f59e0b",   # Amber
-    "loss":      "#ef4444",   # Red
-    "explore":   "#6366f1",   # Indigo
-    "success":   "#10b981",   # Emerald
-    "kill0":     "#ef4444",   # Red
-    "kill1":     "#f59e0b",   # Amber
-    "kill2":     "#6366f1",   # Indigo
-    "kill3":     "#10b981",   # Emerald (victory)
-    "v1":        "#94a3b8",   # Slate
-    "v2":        "#0ea5e9",   # Sky
-    "v3":        "#10b981",   # Emerald
-    "inst0":     "#0ea5e9",   # Sky
-    "inst1":     "#c026d3",   # Fuchsia
-    "inst2":     "#f59e0b",   # Amber
-    "grid":      "#e2e8f0",
-    "text":      "#1e293b",
-    "muted":     "#94a3b8",
-    "bg":        "#ffffff",
+    "dqn": "#0ea5e9",  # Sky blue
+    "ppo": "#c026d3",  # Fuchsia
+    "reward": "#f59e0b",  # Amber
+    "loss": "#ef4444",  # Red
+    "explore": "#6366f1",  # Indigo
+    "success": "#10b981",  # Emerald
+    "kill0": "#ef4444",  # Red
+    "kill1": "#f59e0b",  # Amber
+    "kill2": "#6366f1",  # Indigo
+    "kill3": "#10b981",  # Emerald (victory)
+    "v1": "#94a3b8",  # Slate
+    "v2": "#0ea5e9",  # Sky
+    "v3": "#10b981",  # Emerald
+    "inst0": "#0ea5e9",  # Sky
+    "inst1": "#c026d3",  # Fuchsia
+    "inst2": "#f59e0b",  # Amber
+    "grid": "#e2e8f0",
+    "text": "#1e293b",
+    "muted": "#94a3b8",
+    "bg": "#ffffff",
 }
 
 
 def setup_style():
     """Modern, clean matplotlib style."""
     plt.style.use("seaborn-v0_8-whitegrid")
-    plt.rcParams.update({
-        "figure.figsize": (14, 8),
-        "figure.dpi": 150,
-        "figure.facecolor": "white",
-        "font.family": "sans-serif",
-        "font.sans-serif": ["Inter", "Segoe UI", "Arial", "DejaVu Sans"],
-        "font.size": 12,
-        "axes.titlesize": 16,
-        "axes.labelsize": 13,
-        "xtick.labelsize": 11,
-        "ytick.labelsize": 11,
-        "legend.fontsize": 11,
-        "axes.linewidth": 0.8,
-        "axes.edgecolor": "#cbd5e1",
-        "axes.labelcolor": C["text"],
-        "axes.titleweight": "bold",
-        "axes.spines.top": False,
-        "axes.spines.right": False,
-        "grid.alpha": 0.3,
-        "grid.linewidth": 0.6,
-        "grid.color": C["grid"],
-        "legend.framealpha": 0.95,
-        "legend.edgecolor": "#e2e8f0",
-        "legend.fancybox": True,
-        "lines.linewidth": 2.2,
-        "savefig.dpi": 300,
-        "savefig.bbox": "tight",
-        "savefig.pad_inches": 0.15,
-        "savefig.facecolor": "white",
-    })
+    plt.rcParams.update(
+        {
+            "figure.figsize": (14, 8),
+            "figure.dpi": 150,
+            "figure.facecolor": "white",
+            "font.family": "sans-serif",
+            "font.sans-serif": ["Inter", "Segoe UI", "Arial", "DejaVu Sans"],
+            "font.size": 12,
+            "axes.titlesize": 16,
+            "axes.labelsize": 13,
+            "xtick.labelsize": 11,
+            "ytick.labelsize": 11,
+            "legend.fontsize": 11,
+            "axes.linewidth": 0.8,
+            "axes.edgecolor": "#cbd5e1",
+            "axes.labelcolor": C["text"],
+            "axes.titleweight": "bold",
+            "axes.spines.top": False,
+            "axes.spines.right": False,
+            "grid.alpha": 0.3,
+            "grid.linewidth": 0.6,
+            "grid.color": C["grid"],
+            "legend.framealpha": 0.95,
+            "legend.edgecolor": "#e2e8f0",
+            "legend.fancybox": True,
+            "lines.linewidth": 2.2,
+            "savefig.dpi": 300,
+            "savefig.bbox": "tight",
+            "savefig.pad_inches": 0.15,
+            "savefig.facecolor": "white",
+        }
+    )
 
 
 setup_style()
@@ -109,6 +111,7 @@ setup_style()
 # ============================================================================
 # UTILITY
 # ============================================================================
+
 
 def smooth(data: np.ndarray, window: int = 20) -> np.ndarray:
     if len(data) < window:
@@ -121,7 +124,7 @@ def ci(data: np.ndarray, window: int = 50, conf: float = 0.95):
     n = len(data)
     means, lowers, uppers = [], [], []
     for i in range(n):
-        seg = data[max(0, i - window + 1): i + 1]
+        seg = data[max(0, i - window + 1) : i + 1]
         m = np.mean(seg)
         s = np.std(seg)
         ns = len(seg)
@@ -163,21 +166,38 @@ def detect_iterations(df: pd.DataFrame):
 
 def add_subtitle(ax, text: str):
     """Add muted subtitle under the title."""
-    ax.text(0.0, 1.04, text, transform=ax.transAxes, fontsize=10,
-            color=C["muted"], va="bottom")
+    ax.text(
+        0.0,
+        1.04,
+        text,
+        transform=ax.transAxes,
+        fontsize=10,
+        color=C["muted"],
+        va="bottom",
+    )
 
 
 def stat_box(ax, lines: list, x=0.02, y=0.97):
     """Overlay a stat box."""
     text = "\n".join(lines)
-    ax.text(x, y, text, transform=ax.transAxes, fontsize=10, va="top",
-            fontfamily="monospace", bbox=dict(boxstyle="round,pad=0.4",
-            facecolor="white", edgecolor="#e2e8f0", alpha=0.92))
+    ax.text(
+        x,
+        y,
+        text,
+        transform=ax.transAxes,
+        fontsize=10,
+        va="top",
+        fontfamily="monospace",
+        bbox=dict(
+            boxstyle="round,pad=0.4", facecolor="white", edgecolor="#e2e8f0", alpha=0.92
+        ),
+    )
 
 
 # ============================================================================
 # DATA LOADING
 # ============================================================================
+
 
 def load_log(log_file: str) -> pd.DataFrame:
     if not os.path.exists(log_file):
@@ -191,9 +211,22 @@ def load_log(log_file: str) -> pd.DataFrame:
         df["exploration"] = df["epsilon"]
     elif "entropy" in df.columns and "exploration" not in df.columns:
         df["exploration"] = df["entropy"]
-    numerics = ["reward", "steps", "mantis_killed", "boss_hp", "boss_defeated",
-                "epsilon", "entropy", "exploration", "learning_rate", "loss",
-                "num_updates", "episode", "instance", "phase"]
+    numerics = [
+        "reward",
+        "steps",
+        "mantis_killed",
+        "boss_hp",
+        "boss_defeated",
+        "epsilon",
+        "entropy",
+        "exploration",
+        "learning_rate",
+        "loss",
+        "num_updates",
+        "episode",
+        "instance",
+        "phase",
+    ]
     for col in numerics:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -225,6 +258,7 @@ def get_algo(df: pd.DataFrame) -> str:
 # TRAINING PLOTS
 # ============================================================================
 
+
 def plot_learning_curve(df, out, algo="PPO", window=50):
     fig, ax = plt.subplots(figsize=(14, 8))
     episodes = df["episode"].values
@@ -234,13 +268,22 @@ def plot_learning_curve(df, out, algo="PPO", window=50):
     ax.plot(episodes, rewards, alpha=0.08, color=color, linewidth=0.5)
     mean, lower, upper = ci(rewards, window)
     ax.fill_between(episodes, lower, upper, alpha=0.15, color=color)
-    ax.plot(episodes, mean, color=color, linewidth=2.5, label=f"Media mobile (w={window})")
+    ax.plot(
+        episodes, mean, color=color, linewidth=2.5, label=f"Media mobile (w={window})"
+    )
     ax.axhline(y=0, color=C["muted"], linestyle="--", linewidth=0.8, alpha=0.5)
 
     best_idx = np.argmax(rewards)
-    ax.annotate(f"Best: {rewards[best_idx]:.0f}", xy=(episodes[best_idx], rewards[best_idx]),
-                xytext=(15, 10), textcoords="offset points", fontsize=10, color=color,
-                fontweight="bold", arrowprops=dict(arrowstyle="->", color=color, alpha=0.6))
+    ax.annotate(
+        f"Best: {rewards[best_idx]:.0f}",
+        xy=(episodes[best_idx], rewards[best_idx]),
+        xytext=(15, 10),
+        textcoords="offset points",
+        fontsize=10,
+        color=color,
+        fontweight="bold",
+        arrowprops=dict(arrowstyle="->", color=color, alpha=0.6),
+    )
 
     ax.set_xlabel("Episodio")
     ax.set_ylabel("Reward cumulativo")
@@ -252,11 +295,22 @@ def plot_learning_curve(df, out, algo="PPO", window=50):
     final = np.mean(rewards[-window:]) if len(rewards) >= window else np.mean(rewards)
     initial = np.mean(rewards[:window]) if len(rewards) >= window else rewards[0]
     improv = ((final - initial) / abs(initial) * 100) if initial != 0 else 0
-    stat_box(ax, [f"Episodi: {len(episodes)}", f"Best: {rewards[best_idx]:.0f}",
-                  f"Finale: {final:.0f}", f"Δ: {improv:+.0f}%"])
+    stat_box(
+        ax,
+        [
+            f"Episodi: {len(episodes)}",
+            f"Best: {rewards[best_idx]:.0f}",
+            f"Finale: {final:.0f}",
+            f"Δ: {improv:+.0f}%",
+        ],
+    )
 
     plt.tight_layout()
-    plt.savefig(os.path.join(out, f"{algo.lower()}_learning_curve.png"), dpi=300, facecolor="white")
+    plt.savefig(
+        os.path.join(out, f"{algo.lower()}_learning_curve.png"),
+        dpi=300,
+        facecolor="white",
+    )
     plt.close()
     print(f"  [OK] {algo.lower()}_learning_curve.png")
 
@@ -269,9 +323,21 @@ def plot_kill_and_win_rate(df, out, algo="PPO", window=50):
     mantis = df["mantis_killed"].values
 
     kill_smooth = smooth(mantis.astype(float), window)
-    ax1.plot(episodes, kill_smooth, color=C["dqn"] if algo == "DQN" else C["ppo"],
-             linewidth=2.5, label="Kill rate medio")
-    ax1.axhline(y=1.8, color=C["muted"], linestyle="--", linewidth=1, alpha=0.6, label="Target 1.8")
+    ax1.plot(
+        episodes,
+        kill_smooth,
+        color=C["dqn"] if algo == "DQN" else C["ppo"],
+        linewidth=2.5,
+        label="Kill rate medio",
+    )
+    ax1.axhline(
+        y=1.8,
+        color=C["muted"],
+        linestyle="--",
+        linewidth=1,
+        alpha=0.6,
+        label="Target 1.8",
+    )
     ax1.set_xlabel("Episodio")
     ax1.set_ylabel("Kill rate medio", color=C["text"])
     ax1.set_ylim([-0.1, max(3.2, kill_smooth.max() + 0.2)])
@@ -280,7 +346,14 @@ def plot_kill_and_win_rate(df, out, algo="PPO", window=50):
     ax2 = ax1.twinx()
     wr = win_rate_rolling(mantis, window)
     ax2.fill_between(episodes, 0, wr, alpha=0.12, color=C["success"])
-    ax2.plot(episodes, wr, color=C["success"], linewidth=2, linestyle="--", label="Win rate %")
+    ax2.plot(
+        episodes,
+        wr,
+        color=C["success"],
+        linewidth=2,
+        linestyle="--",
+        label="Win rate %",
+    )
     ax2.set_ylabel("Win rate (%)", color=C["success"])
     ax2.set_ylim([-2, 105])
 
@@ -294,7 +367,11 @@ def plot_kill_and_win_rate(df, out, algo="PPO", window=50):
     ax1.grid(True, alpha=0.25)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(out, f"{algo.lower()}_kill_win_rate.png"), dpi=300, facecolor="white")
+    plt.savefig(
+        os.path.join(out, f"{algo.lower()}_kill_win_rate.png"),
+        dpi=300,
+        facecolor="white",
+    )
     plt.close()
     print(f"  [OK] {algo.lower()}_kill_win_rate.png")
 
@@ -315,14 +392,19 @@ def plot_cross_iteration(df, out, algo="PPO"):
 
     for i, (label, it_df) in enumerate(iters.items()):
         offset = 2000 * (i) if label != "v1" else 0
-        if label == "v2": offset = 2000
-        elif label == "v3": offset = 4000
-        else: offset = 0
+        if label == "v2":
+            offset = 2000
+        elif label == "v3":
+            offset = 4000
+        else:
+            offset = 0
 
         rates = []
         for start in windows:
             end = start + 250
-            mask = ((it_df["episode"] - offset) > start) & ((it_df["episode"] - offset) <= end)
+            mask = ((it_df["episode"] - offset) > start) & (
+                (it_df["episode"] - offset) <= end
+            )
             chunk = it_df[mask]
             if len(chunk) > 0 and "mantis_killed" in chunk.columns:
                 k2 = (chunk["mantis_killed"] >= 2).sum()
@@ -331,11 +413,21 @@ def plot_cross_iteration(df, out, algo="PPO"):
                 rates.append(0)
 
         pos = x + i * bar_width - bar_width * (len(iters) - 1) / 2
-        ax.bar(pos, rates, bar_width * 0.85, color=colors.get(label, C["muted"]),
-               alpha=0.75, label=label.upper(), edgecolor="white", linewidth=0.5)
+        ax.bar(
+            pos,
+            rates,
+            bar_width * 0.85,
+            color=colors.get(label, C["muted"]),
+            alpha=0.75,
+            label=label.upper(),
+            edgecolor="white",
+            linewidth=0.5,
+        )
 
     ax.set_xticks(x)
-    ax.set_xticklabels([f"{s}-{s+250}" for s in windows], rotation=30, ha="right", fontsize=9)
+    ax.set_xticklabels(
+        [f"{s}-{s+250}" for s in windows], rotation=30, ha="right", fontsize=9
+    )
     ax.set_xlabel("Posizione relativa nella run (episodi)")
     ax.set_ylabel("2+ kill rate (%)")
     ax.set_title(f"{algo} — Confronto Cross-Iterazione")
@@ -344,7 +436,11 @@ def plot_cross_iteration(df, out, algo="PPO"):
     ax.grid(True, alpha=0.25, axis="y")
 
     plt.tight_layout()
-    plt.savefig(os.path.join(out, f"{algo.lower()}_cross_iteration.png"), dpi=300, facecolor="white")
+    plt.savefig(
+        os.path.join(out, f"{algo.lower()}_cross_iteration.png"),
+        dpi=300,
+        facecolor="white",
+    )
     plt.close()
     print(f"  [OK] {algo.lower()}_cross_iteration.png")
 
@@ -363,7 +459,14 @@ def plot_per_instance(df, out, algo="PPO", window=30):
         idf = df[df["instance"] == inst]
         kills = smooth(idf["mantis_killed"].values.astype(float), window)
         color = inst_colors[i % 3]
-        ax1.plot(range(len(kills)), kills, color=color, linewidth=2, label=f"Inst {int(inst)}", alpha=0.85)
+        ax1.plot(
+            range(len(kills)),
+            kills,
+            color=color,
+            linewidth=2,
+            label=f"Inst {int(inst)}",
+            alpha=0.85,
+        )
 
     ax1.set_xlabel("Episodio (per istanza)")
     ax1.set_ylabel("Kill rate medio")
@@ -388,7 +491,11 @@ def plot_per_instance(df, out, algo="PPO", window=30):
 
     plt.suptitle(f"{algo} — Analisi Multi-Istanza", fontweight="bold", fontsize=16)
     plt.tight_layout()
-    plt.savefig(os.path.join(out, f"{algo.lower()}_per_instance.png"), dpi=300, facecolor="white")
+    plt.savefig(
+        os.path.join(out, f"{algo.lower()}_per_instance.png"),
+        dpi=300,
+        facecolor="white",
+    )
     plt.close()
     print(f"  [OK] {algo.lower()}_per_instance.png")
 
@@ -405,12 +512,24 @@ def plot_exploration(df, out, algo="PPO"):
 
     ax2 = ax1.twinx()
     if "epsilon" in df.columns:
-        ax2.plot(episodes, df["epsilon"].values, color=C["explore"], linewidth=2.2,
-                 linestyle="--", label="Epsilon")
+        ax2.plot(
+            episodes,
+            df["epsilon"].values,
+            color=C["explore"],
+            linewidth=2.2,
+            linestyle="--",
+            label="Epsilon",
+        )
         ax2.set_ylabel("Epsilon", color=C["explore"])
     elif "entropy" in df.columns:
-        ax2.plot(episodes, smooth(df["entropy"].values, 20), color=C["explore"],
-                 linewidth=2.2, linestyle="--", label="Entropy")
+        ax2.plot(
+            episodes,
+            smooth(df["entropy"].values, 20),
+            color=C["explore"],
+            linewidth=2.2,
+            linestyle="--",
+            label="Entropy",
+        )
         ax2.set_ylabel("Entropy", color=C["explore"])
     else:
         plt.close()
@@ -423,7 +542,9 @@ def plot_exploration(df, out, algo="PPO"):
     ax1.grid(True, alpha=0.25)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(out, f"{algo.lower()}_exploration.png"), dpi=300, facecolor="white")
+    plt.savefig(
+        os.path.join(out, f"{algo.lower()}_exploration.png"), dpi=300, facecolor="white"
+    )
     plt.close()
     print(f"  [OK] {algo.lower()}_exploration.png")
 
@@ -459,7 +580,9 @@ def plot_outcome_evolution(df, out, algo="PPO"):
     b2 = np.array(k0s) + np.array(k1s)
     ax.bar(x, k2s, w, bottom=b2, label="2 kill", color=C["kill2"], alpha=0.75)
     b3 = b2 + np.array(k2s)
-    ax.bar(x, k3s, w, bottom=b3, label="3 kill (vittoria)", color=C["kill3"], alpha=0.75)
+    ax.bar(
+        x, k3s, w, bottom=b3, label="3 kill (vittoria)", color=C["kill3"], alpha=0.75
+    )
 
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=40, ha="right", fontsize=9)
@@ -472,7 +595,11 @@ def plot_outcome_evolution(df, out, algo="PPO"):
     ax.grid(True, alpha=0.2, axis="y")
 
     plt.tight_layout()
-    plt.savefig(os.path.join(out, f"{algo.lower()}_outcome_evolution.png"), dpi=300, facecolor="white")
+    plt.savefig(
+        os.path.join(out, f"{algo.lower()}_outcome_evolution.png"),
+        dpi=300,
+        facecolor="white",
+    )
     plt.close()
     print(f"  [OK] {algo.lower()}_outcome_evolution.png")
 
@@ -496,13 +623,26 @@ def plot_loss(df, out, algo="PPO", window=30):
         return
 
     ax.plot(episodes[valid], losses[valid], alpha=0.1, color=C["loss"], linewidth=0.5)
-    ax.plot(episodes[valid], smooth(losses[valid], window), color=C["loss"], linewidth=2.5, label="Loss (smoothed)")
+    ax.plot(
+        episodes[valid],
+        smooth(losses[valid], window),
+        color=C["loss"],
+        linewidth=2.5,
+        label="Loss (smoothed)",
+    )
 
     if np.sum(valid) > 10:
         z = np.polyfit(episodes[valid], losses[valid], 1)
         p = np.poly1d(z)
-        ax.plot(episodes[valid], p(episodes[valid]), "--", color=C["text"], linewidth=1.2,
-                alpha=0.5, label=f"Trend (slope={z[0]:.2e})")
+        ax.plot(
+            episodes[valid],
+            p(episodes[valid]),
+            "--",
+            color=C["text"],
+            linewidth=1.2,
+            alpha=0.5,
+            label=f"Trend (slope={z[0]:.2e})",
+        )
 
     ax.set_xlabel("Episodio")
     ax.set_ylabel("Loss")
@@ -513,7 +653,9 @@ def plot_loss(df, out, algo="PPO", window=30):
         ax.set_yscale("log")
 
     plt.tight_layout()
-    plt.savefig(os.path.join(out, f"{algo.lower()}_loss.png"), dpi=300, facecolor="white")
+    plt.savefig(
+        os.path.join(out, f"{algo.lower()}_loss.png"), dpi=300, facecolor="white"
+    )
     plt.close()
     print(f"  [OK] {algo.lower()}_loss.png")
 
@@ -538,7 +680,9 @@ def plot_sample_efficiency(df, out, algo="PPO", window=50):
 
     rps = rewards / np.maximum(steps, 1)
     ax2.plot(episodes, rps, alpha=0.1, color=color, linewidth=0.5)
-    ax2.plot(episodes, smooth(rps, window), color=color, linewidth=2.5, label="Reward/step")
+    ax2.plot(
+        episodes, smooth(rps, window), color=color, linewidth=2.5, label="Reward/step"
+    )
     ax2.set_xlabel("Episodio")
     ax2.set_ylabel("Reward / Step")
     ax2.set_title("Efficienza per Episodio", fontweight="bold", fontsize=13)
@@ -547,7 +691,11 @@ def plot_sample_efficiency(df, out, algo="PPO", window=50):
 
     plt.suptitle(f"{algo} — Sample Efficiency", fontweight="bold", fontsize=16)
     plt.tight_layout()
-    plt.savefig(os.path.join(out, f"{algo.lower()}_sample_efficiency.png"), dpi=300, facecolor="white")
+    plt.savefig(
+        os.path.join(out, f"{algo.lower()}_sample_efficiency.png"),
+        dpi=300,
+        facecolor="white",
+    )
     plt.close()
     print(f"  [OK] {algo.lower()}_sample_efficiency.png")
 
@@ -575,24 +723,38 @@ def plot_dashboard(df, out, algo="PPO", window=50):
     ax.axis("off")
     final = np.mean(rewards[-window:]) if len(rewards) >= window else np.mean(rewards)
     best = np.max(rewards)
-    wins = int(np.sum(df["mantis_killed"].values >= 3)) if "mantis_killed" in df.columns else 0
+    wins = (
+        int(np.sum(df["mantis_killed"].values >= 3))
+        if "mantis_killed" in df.columns
+        else 0
+    )
     wr = wins / len(episodes) * 100
     lines = [
-        f"  {algo} TRAINING SUMMARY", f"  {'─'*28}",
+        f"  {algo} TRAINING SUMMARY",
+        f"  {'─'*28}",
         f"  Episodi:     {len(episodes)}",
         f"  Best Reward: {best:.0f}",
         f"  Media finale:{final:.0f}",
         f"  Vittorie:    {wins} ({wr:.1f}%)",
     ]
-    ax.text(0.05, 0.92, "\n".join(lines), transform=ax.transAxes, fontsize=12,
-            va="top", fontfamily="monospace",
-            bbox=dict(boxstyle="round,pad=0.5", facecolor="#f8fafc", edgecolor="#e2e8f0"))
+    ax.text(
+        0.05,
+        0.92,
+        "\n".join(lines),
+        transform=ax.transAxes,
+        fontsize=12,
+        va="top",
+        fontfamily="monospace",
+        bbox=dict(boxstyle="round,pad=0.5", facecolor="#f8fafc", edgecolor="#e2e8f0"),
+    )
 
     # 3. Kill/Win Rate
     ax = fig.add_subplot(gs[1, 0])
     if "mantis_killed" in df.columns:
         mantis = df["mantis_killed"].values
-        ax.plot(episodes, smooth(mantis.astype(float), window), color=color, linewidth=2)
+        ax.plot(
+            episodes, smooth(mantis.astype(float), window), color=color, linewidth=2
+        )
         ax.axhline(y=3, color=C["success"], linestyle="--", linewidth=1, alpha=0.5)
         ax.set_ylabel("Kill rate")
     ax.set_title("Kill Rate", fontweight="bold", fontsize=12)
@@ -615,7 +777,12 @@ def plot_dashboard(df, out, algo="PPO", window=50):
             losses = df[col].values
             valid = np.isfinite(losses)
             if np.sum(valid) > 0:
-                ax.plot(episodes[valid], smooth(losses[valid], 20), color=C["loss"], linewidth=2)
+                ax.plot(
+                    episodes[valid],
+                    smooth(losses[valid], 20),
+                    color=C["loss"],
+                    linewidth=2,
+                )
             break
     ax.set_title("Loss", fontweight="bold", fontsize=12)
     ax.grid(True, alpha=0.2)
@@ -631,8 +798,14 @@ def plot_dashboard(df, out, algo="PPO", window=50):
         ax.set_xticklabels(["0", "1", "2", "3 (W)"])
         for bar, count in zip(bars, counts):
             if count > 0:
-                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(counts)*0.01,
-                        str(count), ha="center", fontsize=9, fontweight="bold")
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + max(counts) * 0.01,
+                    str(count),
+                    ha="center",
+                    fontsize=9,
+                    fontweight="bold",
+                )
     ax.set_title("Distribuzione Outcome", fontweight="bold", fontsize=12)
     ax.grid(True, alpha=0.2, axis="y")
 
@@ -642,7 +815,9 @@ def plot_dashboard(df, out, algo="PPO", window=50):
         ax.plot(episodes, df["epsilon"].values, color=C["explore"], linewidth=2)
         ax.set_ylabel("Epsilon")
     elif "entropy" in df.columns:
-        ax.plot(episodes, smooth(df["entropy"].values, 20), color=C["explore"], linewidth=2)
+        ax.plot(
+            episodes, smooth(df["entropy"].values, 20), color=C["explore"], linewidth=2
+        )
         ax.set_ylabel("Entropy")
     ax.set_title("Esplorazione", fontweight="bold", fontsize=12)
     ax.grid(True, alpha=0.2)
@@ -650,14 +825,23 @@ def plot_dashboard(df, out, algo="PPO", window=50):
     # 8. Reward Distribution
     ax = fig.add_subplot(gs[2, 2])
     ax.hist(rewards, bins=40, color=color, alpha=0.65, edgecolor="white")
-    ax.axvline(x=np.mean(rewards), color=C["loss"], linestyle="--", linewidth=2,
-               label=f"Media: {np.mean(rewards):.0f}")
+    ax.axvline(
+        x=np.mean(rewards),
+        color=C["loss"],
+        linestyle="--",
+        linewidth=2,
+        label=f"Media: {np.mean(rewards):.0f}",
+    )
     ax.set_title("Distribuzione Reward", fontweight="bold", fontsize=12)
     ax.legend(fontsize=10)
     ax.grid(True, alpha=0.2, axis="y")
 
-    fig.suptitle(f"{algo} — Training Dashboard", fontweight="bold", fontsize=20, y=0.995)
-    plt.savefig(os.path.join(out, f"{algo.lower()}_dashboard.png"), dpi=300, facecolor="white")
+    fig.suptitle(
+        f"{algo} — Training Dashboard", fontweight="bold", fontsize=20, y=0.995
+    )
+    plt.savefig(
+        os.path.join(out, f"{algo.lower()}_dashboard.png"), dpi=300, facecolor="white"
+    )
     plt.close()
     print(f"  [OK] {algo.lower()}_dashboard.png")
 
@@ -683,8 +867,13 @@ def plot_comparison(df_dqn, df_ppo, out, window=50):
     for df, algo, color in [(df_dqn, "DQN", C["dqn"]), (df_ppo, "PPO", C["ppo"])]:
         if "mantis_killed" in df.columns:
             ep = df["episode"].values
-            ax.plot(ep, smooth(df["mantis_killed"].values.astype(float), window),
-                    color=color, linewidth=2.5, label=algo)
+            ax.plot(
+                ep,
+                smooth(df["mantis_killed"].values.astype(float), window),
+                color=color,
+                linewidth=2.5,
+                label=algo,
+            )
     ax.set_title("Kill Rate", fontweight="bold", fontsize=13)
     ax.legend()
     ax.grid(True, alpha=0.25)
@@ -693,8 +882,13 @@ def plot_comparison(df_dqn, df_ppo, out, window=50):
     ax = axes[1, 0]
     for df, algo, color in [(df_dqn, "DQN", C["dqn"]), (df_ppo, "PPO", C["ppo"])]:
         if "steps" in df.columns:
-            ax.plot(np.cumsum(df["steps"].values) / 1000, np.cumsum(df["reward"].values),
-                    color=color, linewidth=2.5, label=algo)
+            ax.plot(
+                np.cumsum(df["steps"].values) / 1000,
+                np.cumsum(df["reward"].values),
+                color=color,
+                linewidth=2.5,
+                label=algo,
+            )
     ax.set_title("Sample Efficiency", fontweight="bold", fontsize=13)
     ax.set_xlabel("Steps (k)")
     ax.legend()
@@ -704,11 +898,15 @@ def plot_comparison(df_dqn, df_ppo, out, window=50):
     ax = axes[1, 1]
     x = np.arange(4)
     w = 0.35
-    for i, (df, algo, color) in enumerate([(df_dqn, "DQN", C["dqn"]), (df_ppo, "PPO", C["ppo"])]):
+    for i, (df, algo, color) in enumerate(
+        [(df_dqn, "DQN", C["dqn"]), (df_ppo, "PPO", C["ppo"])]
+    ):
         if "mantis_killed" in df.columns:
             mantis = df["mantis_killed"].values
             counts = [np.sum(mantis == k) / len(mantis) * 100 for k in range(4)]
-            ax.bar(x + i * w - w / 2, counts, w * 0.9, color=color, alpha=0.7, label=algo)
+            ax.bar(
+                x + i * w - w / 2, counts, w * 0.9, color=color, alpha=0.7, label=algo
+            )
     ax.set_xticks(x)
     ax.set_xticklabels(["0 kill", "1 kill", "2 kill", "3 kill"])
     ax.set_ylabel("%")
@@ -718,7 +916,9 @@ def plot_comparison(df_dqn, df_ppo, out, window=50):
 
     fig.suptitle("DQN vs PPO — Confronto", fontweight="bold", fontsize=18)
     plt.tight_layout()
-    plt.savefig(os.path.join(out, "dqn_vs_ppo_comparison.png"), dpi=300, facecolor="white")
+    plt.savefig(
+        os.path.join(out, "dqn_vs_ppo_comparison.png"), dpi=300, facecolor="white"
+    )
     plt.close()
     print(f"  [OK] dqn_vs_ppo_comparison.png")
 
@@ -726,6 +926,7 @@ def plot_comparison(df_dqn, df_ppo, out, window=50):
 # ============================================================================
 # PLAY (INFERENCE) PLOTS
 # ============================================================================
+
 
 def plot_play_results(df, out):
     """Genera tutti i grafici dall'output di play.py."""
@@ -751,11 +952,20 @@ def plot_play_results(df, out):
     ax.set_ylabel("Win Rate Cumulativo (%)")
     ax.set_ylim([-2, 105])
     ax.set_title(f"Inference — Win Rate Cumulativo")
-    add_subtitle(ax, f"{agent_label} · {int(cum_wins[-1])}/{len(runs)} vittorie ({cum_wr[-1]:.1f}%)")
+    add_subtitle(
+        ax,
+        f"{agent_label} · {int(cum_wins[-1])}/{len(runs)} vittorie ({cum_wr[-1]:.1f}%)",
+    )
     ax.grid(True, alpha=0.25)
-    stat_box(ax, [f"Runs: {len(runs)}", f"Vittorie: {int(cum_wins[-1])}",
-                  f"Win Rate: {cum_wr[-1]:.1f}%",
-                  f"Kill medi: {np.mean(kills):.2f}"])
+    stat_box(
+        ax,
+        [
+            f"Runs: {len(runs)}",
+            f"Vittorie: {int(cum_wins[-1])}",
+            f"Win Rate: {cum_wr[-1]:.1f}%",
+            f"Kill medi: {np.mean(kills):.2f}",
+        ],
+    )
     plt.tight_layout()
     plt.savefig(os.path.join(out, "play_win_rate.png"), dpi=300, facecolor="white")
     plt.close()
@@ -765,19 +975,31 @@ def plot_play_results(df, out):
     fig, ax = plt.subplots(figsize=(12, 7))
     counts = [np.sum(kills == i) for i in range(4)]
     cols = [C["kill0"], C["kill1"], C["kill2"], C["kill3"]]
-    bars = ax.bar([0, 1, 2, 3], counts, color=cols, alpha=0.8, edgecolor="white", width=0.65)
+    bars = ax.bar(
+        [0, 1, 2, 3], counts, color=cols, alpha=0.8, edgecolor="white", width=0.65
+    )
     for bar, count in zip(bars, counts):
         pct = count / len(kills) * 100
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(counts)*0.015,
-                f"{count}\n({pct:.1f}%)", ha="center", fontsize=11, fontweight="bold")
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + max(counts) * 0.015,
+            f"{count}\n({pct:.1f}%)",
+            ha="center",
+            fontsize=11,
+            fontweight="bold",
+        )
     ax.set_xticks([0, 1, 2, 3])
-    ax.set_xticklabels(["0 kill\n(sconfitta)", "1 kill", "2 kill", "3 kill\n(vittoria)"])
+    ax.set_xticklabels(
+        ["0 kill\n(sconfitta)", "1 kill", "2 kill", "3 kill\n(vittoria)"]
+    )
     ax.set_ylabel("Numero di run")
     ax.set_title("Inference — Distribuzione Kill")
     add_subtitle(ax, f"{len(runs)} run totali")
     ax.grid(True, alpha=0.2, axis="y")
     plt.tight_layout()
-    plt.savefig(os.path.join(out, "play_kill_distribution.png"), dpi=300, facecolor="white")
+    plt.savefig(
+        os.path.join(out, "play_kill_distribution.png"), dpi=300, facecolor="white"
+    )
     plt.close()
     print(f"  [OK] play_kill_distribution.png")
 
@@ -785,8 +1007,17 @@ def plot_play_results(df, out):
     fig, ax = plt.subplots(figsize=(14, 7))
     loss_hp = boss_hp[~is_win]
     if len(loss_hp) > 0:
-        ax.hist(loss_hp, bins=30, color=C["loss"], alpha=0.6, edgecolor="white", label="Sconfitte")
-    ax.axvline(x=0, color=C["success"], linewidth=2, linestyle="--", label="Vittoria (HP=0)")
+        ax.hist(
+            loss_hp,
+            bins=30,
+            color=C["loss"],
+            alpha=0.6,
+            edgecolor="white",
+            label="Sconfitte",
+        )
+    ax.axvline(
+        x=0, color=C["success"], linewidth=2, linestyle="--", label="Vittoria (HP=0)"
+    )
     ax.set_xlabel("Boss HP rimanente")
     ax.set_ylabel("Frequenza")
     ax.set_title("Inference — Boss HP alla Fine")
@@ -794,9 +1025,14 @@ def plot_play_results(df, out):
     ax.legend()
     ax.grid(True, alpha=0.25, axis="y")
     if len(loss_hp) > 0:
-        stat_box(ax, [f"HP medio (sconfitte): {np.mean(loss_hp):.0f}",
-                      f"HP mediano: {np.median(loss_hp):.0f}",
-                      f"Quasi vittorie (HP<100): {np.sum(loss_hp < 100)}"])
+        stat_box(
+            ax,
+            [
+                f"HP medio (sconfitte): {np.mean(loss_hp):.0f}",
+                f"HP mediano: {np.median(loss_hp):.0f}",
+                f"Quasi vittorie (HP<100): {np.sum(loss_hp < 100)}",
+            ],
+        )
     plt.tight_layout()
     plt.savefig(os.path.join(out, "play_boss_hp.png"), dpi=300, facecolor="white")
     plt.close()
@@ -807,9 +1043,23 @@ def plot_play_results(df, out):
     win_steps = steps[is_win]
     loss_steps = steps[~is_win]
     if len(loss_steps) > 0:
-        ax.hist(loss_steps, bins=25, color=C["loss"], alpha=0.5, edgecolor="white", label="Sconfitte")
+        ax.hist(
+            loss_steps,
+            bins=25,
+            color=C["loss"],
+            alpha=0.5,
+            edgecolor="white",
+            label="Sconfitte",
+        )
     if len(win_steps) > 0:
-        ax.hist(win_steps, bins=25, color=C["success"], alpha=0.6, edgecolor="white", label="Vittorie")
+        ax.hist(
+            win_steps,
+            bins=25,
+            color=C["success"],
+            alpha=0.6,
+            edgecolor="white",
+            label="Vittorie",
+        )
     ax.set_xlabel("Steps per run")
     ax.set_ylabel("Frequenza")
     ax.set_title("Inference — Durata Run")
@@ -822,7 +1072,9 @@ def plot_play_results(df, out):
         lines.append(f"Più veloce: {np.min(win_steps)}")
     stat_box(ax, lines)
     plt.tight_layout()
-    plt.savefig(os.path.join(out, "play_steps_distribution.png"), dpi=300, facecolor="white")
+    plt.savefig(
+        os.path.join(out, "play_steps_distribution.png"), dpi=300, facecolor="white"
+    )
     plt.close()
     print(f"  [OK] play_steps_distribution.png")
 
@@ -852,7 +1104,8 @@ def plot_play_results(df, out):
     ax.axis("off")
     total_w = int(cum_wins[-1])
     slines = [
-        f"  INFERENCE SUMMARY", f"  {'─'*26}",
+        f"  INFERENCE SUMMARY",
+        f"  {'─'*26}",
         f"  Agente:   {agent_label}",
         f"  Modello:  {models[0] if len(models)==1 else 'multi'}",
         f"  Run:      {len(runs)}",
@@ -861,9 +1114,16 @@ def plot_play_results(df, out):
     ]
     if len(win_steps) > 0:
         slines.append(f"  Best run: {np.min(win_steps)} steps")
-    ax.text(0.05, 0.92, "\n".join(slines), transform=ax.transAxes, fontsize=12,
-            va="top", fontfamily="monospace",
-            bbox=dict(boxstyle="round,pad=0.5", facecolor="#f8fafc", edgecolor="#e2e8f0"))
+    ax.text(
+        0.05,
+        0.92,
+        "\n".join(slines),
+        transform=ax.transAxes,
+        fontsize=12,
+        va="top",
+        fontfamily="monospace",
+        bbox=dict(boxstyle="round,pad=0.5", facecolor="#f8fafc", edgecolor="#e2e8f0"),
+    )
 
     # Boss HP
     ax = fig.add_subplot(gs[1, 0])
@@ -875,9 +1135,23 @@ def plot_play_results(df, out):
     # Steps win vs loss
     ax = fig.add_subplot(gs[1, 1])
     if len(loss_steps) > 0:
-        ax.hist(loss_steps, bins=20, color=C["loss"], alpha=0.5, edgecolor="white", label="Loss")
+        ax.hist(
+            loss_steps,
+            bins=20,
+            color=C["loss"],
+            alpha=0.5,
+            edgecolor="white",
+            label="Loss",
+        )
     if len(win_steps) > 0:
-        ax.hist(win_steps, bins=20, color=C["success"], alpha=0.6, edgecolor="white", label="Win")
+        ax.hist(
+            win_steps,
+            bins=20,
+            color=C["success"],
+            alpha=0.6,
+            edgecolor="white",
+            label="Win",
+        )
     ax.set_title("Steps (Win vs Loss)", fontweight="bold", fontsize=12)
     ax.legend(fontsize=9)
     ax.grid(True, alpha=0.2, axis="y")
@@ -885,14 +1159,29 @@ def plot_play_results(df, out):
     # Kill per run (scatter)
     ax = fig.add_subplot(gs[1, 2])
     scatter_colors = [cols[min(k, 3)] for k in kills]
-    ax.scatter(runs, kills, c=scatter_colors, alpha=0.6, s=25, edgecolors="white", linewidth=0.3)
-    ax.plot(runs, smooth(kills.astype(float), max(5, len(runs)//10)), color=C["text"],
-            linewidth=2, alpha=0.7)
+    ax.scatter(
+        runs,
+        kills,
+        c=scatter_colors,
+        alpha=0.6,
+        s=25,
+        edgecolors="white",
+        linewidth=0.3,
+    )
+    ax.plot(
+        runs,
+        smooth(kills.astype(float), max(5, len(runs) // 10)),
+        color=C["text"],
+        linewidth=2,
+        alpha=0.7,
+    )
     ax.set_yticks([0, 1, 2, 3])
     ax.set_title("Kill per Run", fontweight="bold", fontsize=12)
     ax.grid(True, alpha=0.2)
 
-    fig.suptitle(f"Inference Dashboard — {agent_label}", fontweight="bold", fontsize=18, y=0.995)
+    fig.suptitle(
+        f"Inference Dashboard — {agent_label}", fontweight="bold", fontsize=18, y=0.995
+    )
     plt.savefig(os.path.join(out, "play_dashboard.png"), dpi=300, facecolor="white")
     plt.close()
     print(f"  [OK] play_dashboard.png")
@@ -905,7 +1194,13 @@ def plot_play_results(df, out):
             a_wins = (adf["result"] == "WIN").values
             a_cum_wr = np.cumsum(a_wins) / np.arange(1, len(a_wins) + 1) * 100
             color = C["ppo"] if "PPO" in agent_name.upper() else C["dqn"]
-            ax1.plot(range(1, len(a_wins) + 1), a_cum_wr, color=color, linewidth=2.5, label=agent_name)
+            ax1.plot(
+                range(1, len(a_wins) + 1),
+                a_cum_wr,
+                color=color,
+                linewidth=2.5,
+                label=agent_name,
+            )
 
         ax1.set_title("Win Rate per Agente", fontweight="bold", fontsize=13)
         ax1.set_xlabel("Run")
@@ -920,7 +1215,14 @@ def plot_play_results(df, out):
             ak = adf["mantis_killed"].values
             acounts = [np.sum(ak == k) / len(ak) * 100 for k in range(4)]
             color = C["ppo"] if "PPO" in agent_name.upper() else C["dqn"]
-            ax2.bar(x + i * w - w / 2, acounts, w * 0.9, color=color, alpha=0.7, label=agent_name)
+            ax2.bar(
+                x + i * w - w / 2,
+                acounts,
+                w * 0.9,
+                color=color,
+                alpha=0.7,
+                label=agent_name,
+            )
 
         ax2.set_xticks(x)
         ax2.set_xticklabels(["0 kill", "1 kill", "2 kill", "3 kill"])
@@ -929,9 +1231,13 @@ def plot_play_results(df, out):
         ax2.legend()
         ax2.grid(True, alpha=0.25, axis="y")
 
-        fig.suptitle("PPO vs DQN — Inference Comparison", fontweight="bold", fontsize=16)
+        fig.suptitle(
+            "PPO vs DQN — Inference Comparison", fontweight="bold", fontsize=16
+        )
         plt.tight_layout()
-        plt.savefig(os.path.join(out, "play_agent_comparison.png"), dpi=300, facecolor="white")
+        plt.savefig(
+            os.path.join(out, "play_agent_comparison.png"), dpi=300, facecolor="white"
+        )
         plt.close()
         print(f"  [OK] play_agent_comparison.png")
 
@@ -939,6 +1245,7 @@ def plot_play_results(df, out):
 # ============================================================================
 # GENERATION ENTRY POINTS
 # ============================================================================
+
 
 def generate_all_training(df, out, algo, window=50):
     print(f"\nGenerating {algo} training plots...")
@@ -957,6 +1264,7 @@ def generate_all_training(df, out, algo, window=50):
 # CLI
 # ============================================================================
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Genera grafici per training e inference",
@@ -969,10 +1277,15 @@ Esempi:
   python generate_plots.py --mode multi --multi-log training_log_ppo.csv
   python generate_plots.py --mode play --play-log play_log.csv
   python generate_plots.py --mode presentation --ppo-log ppo.csv
-        """)
+        """,
+    )
 
-    parser.add_argument("--mode", type=str, required=True,
-                        choices=["dqn", "ppo", "compare", "multi", "play", "presentation"])
+    parser.add_argument(
+        "--mode",
+        type=str,
+        required=True,
+        choices=["dqn", "ppo", "compare", "multi", "play", "presentation"],
+    )
     parser.add_argument("--dqn-log", type=str)
     parser.add_argument("--ppo-log", type=str)
     parser.add_argument("--multi-log", type=str)

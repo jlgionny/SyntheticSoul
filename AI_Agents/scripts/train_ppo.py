@@ -71,8 +71,10 @@ from preprocess import (
 # FRAME STACKER
 # ═══════════════════════════════════════════════════════════════
 
+
 class FrameStacker:
     """Stack N consecutive frames. State [F] → [F × N]."""
+
     def __init__(self, stack_size: int, state_dim: int):
         self.stack_size = stack_size
         self.state_dim = state_dim
@@ -93,6 +95,7 @@ class FrameStacker:
 # HALL OF FAME — SHARED STATE (FILE-LOCKED)
 # ═══════════════════════════════════════════════════════════════
 
+
 class HallOfFame:
     """
     Shared state across instances: maintains Top-K best models.
@@ -112,34 +115,53 @@ class HallOfFame:
         self.log_file = os.path.join(checkpoint_dir, "training_log_ppo.csv")
 
         if not os.path.exists(self.state_file):
-            self._write_state({
-                "best_models": [],
-                "total_episodes": 0,
-                "global_best_reward": -float("inf"),
-                "agent_type": "ppo",
-            })
+            self._write_state(
+                {
+                    "best_models": [],
+                    "total_episodes": 0,
+                    "global_best_reward": -float("inf"),
+                    "agent_type": "ppo",
+                }
+            )
 
         if not os.path.exists(self.log_file):
-            with open(self.log_file, 'w', newline='') as f:
+            with open(self.log_file, "w", newline="") as f:
                 writer = csv.writer(f)
-                writer.writerow([
-                    'timestamp', 'instance_id', 'phase', 'episode', 'reward',
-                    'steps', 'mantis_killed', 'boss_hp', 'boss_defeated',
-                    'entropy', 'learning_rate', 'num_updates'
-                ])
+                writer.writerow(
+                    [
+                        "timestamp",
+                        "instance_id",
+                        "phase",
+                        "episode",
+                        "reward",
+                        "steps",
+                        "mantis_killed",
+                        "boss_hp",
+                        "boss_defeated",
+                        "entropy",
+                        "learning_rate",
+                        "num_updates",
+                    ]
+                )
 
     def _read_state(self) -> dict:
         try:
-            with open(self.state_file, 'r') as f:
+            with open(self.state_file, "r") as f:
                 return json.load(f)
         except Exception:
-            return {"best_models": [], "total_episodes": 0, "global_best_reward": -float("inf")}
+            return {
+                "best_models": [],
+                "total_episodes": 0,
+                "global_best_reward": -float("inf"),
+            }
 
     def _write_state(self, state: dict):
-        with open(self.state_file, 'w') as f:
+        with open(self.state_file, "w") as f:
             json.dump(state, f, indent=2)
 
-    def update_best_model(self, instance_id: int, reward: float, model_path: str) -> bool:
+    def update_best_model(
+        self, instance_id: int, reward: float, model_path: str
+    ) -> bool:
         """Try to insert model into Hall of Fame. Returns True if accepted."""
         lock = filelock.FileLock(self.lock_file, timeout=15)
         with lock:
@@ -176,6 +198,7 @@ class HallOfFame:
                 return False
 
             import shutil
+
             pool_filename = f"hof_ppo_inst{instance_id}.pth"
             pool_path = os.path.join(self.models_dir, pool_filename)
             try:
@@ -207,7 +230,9 @@ class HallOfFame:
 
             rank = insert_idx + 1
             print(f"\n  {'★'*50}")
-            print(f"  ★ [PPO Inst {instance_id}] HALL OF FAME! R={reward:.2f} (Rank {rank}/{self.keep_top_k})")
+            print(
+                f"  ★ [PPO Inst {instance_id}] HALL OF FAME! R={reward:.2f} (Rank {rank}/{self.keep_top_k})"
+            )
             print(f"  {'★'*50}\n")
             return True
 
@@ -216,7 +241,9 @@ class HallOfFame:
         with lock:
             state = self._read_state()
             best_models = state.get("best_models", [])
-            candidates = [m for m in best_models if m.get("instance_id") != exclude_instance]
+            candidates = [
+                m for m in best_models if m.get("instance_id") != exclude_instance
+            ]
             if not candidates:
                 candidates = best_models
             if not candidates:
@@ -246,13 +273,14 @@ class HallOfFame:
             with lock:
                 if not os.path.exists(self.log_file):
                     return 0
-                with open(self.log_file, 'r') as f:
+                with open(self.log_file, "r") as f:
                     reader = csv.DictReader(f)
                     for row in reader:
-                        if (str(row.get('instance_id', '')) == str(instance_id) and
-                                str(row.get('phase', '')) == str(phase)):
+                        if str(row.get("instance_id", "")) == str(instance_id) and str(
+                            row.get("phase", "")
+                        ) == str(phase):
                             try:
-                                ep = int(row['episode'])
+                                ep = int(row["episode"])
                                 if ep > last_ep:
                                     last_ep = ep
                             except (ValueError, KeyError):
@@ -261,20 +289,41 @@ class HallOfFame:
             pass
         return last_ep
 
-    def log_episode(self, instance_id, phase, episode, reward, steps,
-                    mantis_killed, boss_hp, boss_defeated, entropy, lr, updates):
+    def log_episode(
+        self,
+        instance_id,
+        phase,
+        episode,
+        reward,
+        steps,
+        mantis_killed,
+        boss_hp,
+        boss_defeated,
+        entropy,
+        lr,
+        updates,
+    ):
         lock = filelock.FileLock(self.lock_file, timeout=5)
         try:
             with lock:
-                with open(self.log_file, 'a', newline='') as f:
+                with open(self.log_file, "a", newline="") as f:
                     writer = csv.writer(f)
-                    writer.writerow([
-                        datetime.now().strftime("%H:%M:%S"),
-                        instance_id, phase, episode, f"{reward:.2f}",
-                        steps, mantis_killed, f"{boss_hp:.0f}",
-                        1 if boss_defeated else 0,
-                        f"{entropy:.4f}", f"{lr:.2e}", updates
-                    ])
+                    writer.writerow(
+                        [
+                            datetime.now().strftime("%H:%M:%S"),
+                            instance_id,
+                            phase,
+                            episode,
+                            f"{reward:.2f}",
+                            steps,
+                            mantis_killed,
+                            f"{boss_hp:.0f}",
+                            1 if boss_defeated else 0,
+                            f"{entropy:.4f}",
+                            f"{lr:.2e}",
+                            updates,
+                        ]
+                    )
         except Exception:
             pass
 
@@ -292,10 +341,14 @@ class HallOfFame:
 PHASE_CONFIGS = {
     1: {
         "name": "SURVIVE",
+        "name": "SURVIVE",
         "description": "Learn to dodge and not die",
         "episodes": 1000,
         "lr": 3e-4,
+        "lr": 3e-4,
         "lr_end_factor": 0.3,
+        "entropy_start": 0.08,
+        "entropy_end": 0.03,
         "entropy_start": 0.08,
         "entropy_end": 0.03,
         "gae_lambda": 0.95,
@@ -303,8 +356,10 @@ PHASE_CONFIGS = {
         "batch_size": 64,
         "update_interval": 256,
         "gamma": 0.99,
+        "gamma": 0.99,
         "use_pattern_bonus": True,
         "preprocess_version": 2,
+        "promotion_condition": "avg_survival_steps >= 850",
         "promotion_condition": "avg_survival_steps >= 850",
         "promotion_avg_window": 25,
     },
@@ -312,7 +367,12 @@ PHASE_CONFIGS = {
         "name": "FIRST BLOOD",
         "description": "Deal damage and kill the first mantis",
         "episodes": 1500,
+    2: {
+        "name": "FIRST BLOOD",
+        "description": "Deal damage and kill the first mantis",
+        "episodes": 1500,
         "lr": 1.5e-4,
+        "lr_end_factor": 0.2,
         "lr_end_factor": 0.2,
         "entropy_start": 0.05,
         "entropy_end": 0.005,
@@ -327,9 +387,14 @@ PHASE_CONFIGS = {
         "promotion_avg_window": 30,
     },
     3: {
+    3: {
         "name": "DUAL MANTIS",
         "description": "Handle two mantises at once",
         "episodes": 2000,
+        "lr": 5e-5,
+        "lr_end_factor": 0.25,
+        "entropy_start": 0.03,
+        "entropy_end": 0.005,
         "lr": 5e-5,
         "lr_end_factor": 0.25,
         "entropy_start": 0.03,
@@ -338,12 +403,16 @@ PHASE_CONFIGS = {
         "n_epochs": 4,
         "batch_size": 64,
         "update_interval": 384,
+        "update_interval": 384,
         "gamma": 0.995,
         "use_pattern_bonus": True,
         "preprocess_version": 2,
         "promotion_condition": "avg_mantis_killed >= 1.5",
         "promotion_avg_window": 40,
+        "promotion_condition": "avg_mantis_killed >= 1.5",
+        "promotion_avg_window": 40,
     },
+    4: {
     4: {
         "name": "MASTERY",
         "description": "Full victory, optimize time and no-hit",
@@ -360,6 +429,7 @@ PHASE_CONFIGS = {
         "use_pattern_bonus": True,
         "preprocess_version": 2,
         "promotion_condition": "avg_mantis_killed >= 2.5",
+        "promotion_condition": "avg_mantis_killed >= 2.5",
         "promotion_avg_window": 50,
     },
 }
@@ -369,14 +439,16 @@ PHASE_CONFIGS = {
 # UTILITY
 # ═══════════════════════════════════════════════════════════════
 
+
 def cosine_entropy_decay(episode, total_episodes, start, end):
     """PPO-SPECIFIC: Cosine annealing for entropy coefficient."""
     progress = episode / max(total_episodes, 1)
     return end + (start - end) * 0.5 * (1.0 + math.cos(math.pi * progress))
 
 
-def check_promotion(episode_steps_history, episode_kills, episode_damage,
-                     wins, total_episodes, config):
+def check_promotion(
+    episode_steps_history, episode_kills, episode_damage, wins, total_episodes, config
+):
     window = config["promotion_avg_window"]
     if len(episode_steps_history) < window:
         return False
@@ -411,6 +483,7 @@ def check_promotion(episode_steps_history, episode_kills, episode_damage,
 #   from env_ppo.py
 # ═══════════════════════════════════════════════════════════════
 
+
 def train_ppo_instance(
     instance_id: int,
     port: int,
@@ -433,7 +506,9 @@ def train_ppo_instance(
 
     # ═══ PPO ENV: Dense reward environment ═══
     try:
-        env = HollowKnightEnvPPO(host="localhost", port=port, phase=phase, reward_scale=5.0)
+        env = HollowKnightEnvPPO(
+            host="localhost", port=port, phase=phase, reward_scale=5.0
+        )
     except Exception as e:
         print(f"[PPO Inst {instance_id}] Connection failed: {e}")
         return None
@@ -451,15 +526,15 @@ def train_ppo_instance(
     # ═══ PPO AGENT: On-policy with LSTM ═══
     agent = PPOAgent(
         state_size=stacked_dim,
-        action_size=8,                       # Same action space as DQN
+        action_size=8,  # Same action space as DQN
         learning_rate=cfg["lr"],
         lr_end_factor=cfg["lr_end_factor"],
         total_episodes=cfg["episodes"],
         gamma=cfg["gamma"],
-        gae_lambda=cfg["gae_lambda"],        # PPO-specific: GAE lambda
-        entropy_coef=cfg["entropy_start"],   # PPO-specific: entropy bonus
-        use_lstm=False,                       # PPO-specific: recurrent policy
-        n_epochs=cfg["n_epochs"],            # PPO-specific: epochs per update
+        gae_lambda=cfg["gae_lambda"],  # PPO-specific: GAE lambda
+        entropy_coef=cfg["entropy_start"],  # PPO-specific: entropy bonus
+        use_lstm=False,  # PPO-specific: recurrent policy
+        n_epochs=cfg["n_epochs"],  # PPO-specific: epochs per update
         batch_size=cfg["batch_size"],
     )
 
@@ -496,7 +571,9 @@ def train_ppo_instance(
     # ═══ RESUME: offset episodi dal log precedente ═══
     episode_offset = hof.get_last_episode(instance_id, phase)
     if episode_offset > 0:
-        print(f"[PPO Inst {instance_id}] ✓ Ripresa dal log: ultimo ep={episode_offset}, i nuovi partiranno da {episode_offset + 1}")
+        print(
+            f"[PPO Inst {instance_id}] ✓ Ripresa dal log: ultimo ep={episode_offset}, i nuovi partiranno da {episode_offset + 1}"
+        )
 
     # ═══ TRAINING LOOP ═══
     for episode in range(cfg["episodes"]):
@@ -588,13 +665,21 @@ def train_ppo_instance(
                 # Salva 2 volte per sovrappesare nel buffer
                 agent.kill_buffer.add_episode(states_t, actions_t, rewards_t, dones_t)
                 agent.kill_buffer.add_episode(states_t, actions_t, rewards_t, dones_t)
-                print(f"  [PPO {instance_id}] ★★ MULTI-KILL x{mantis_killed} saved 2× to buffer ({len(agent.kill_buffer)} stored)")
+                print(
+                    f"  [PPO {instance_id}] ★★ MULTI-KILL x{mantis_killed} saved 2× to buffer ({len(agent.kill_buffer)} stored)"
+                )
         elif mantis_killed >= 1 or boss_hp_end <= 50:
             if len(ep_transitions) >= 10:
                 states_t, actions_t, rewards_t, dones_t = zip(*ep_transitions)
                 agent.kill_buffer.add_episode(states_t, actions_t, rewards_t, dones_t)
-                label = "KILL" if mantis_killed >= 1 else f"NEAR-KILL (HP={boss_hp_end:.0f})"
-                print(f"  [PPO {instance_id}] → {label} saved to buffer ({len(agent.kill_buffer)} stored)")
+                label = (
+                    "KILL"
+                    if mantis_killed >= 1
+                    else f"NEAR-KILL (HP={boss_hp_end:.0f})"
+                )
+                print(
+                    f"  [PPO {instance_id}] → {label} saved to buffer ({len(agent.kill_buffer)} stored)"
+                )
 
         # Save checkpoints
         latest_path = os.path.join(instance_dir, "latest.pth")
@@ -607,7 +692,11 @@ def train_ppo_instance(
             hof.update_best_model(instance_id, episode_reward, best_model_path)
 
         if (episode + 1) % 100 == 0:
-            agent.save(os.path.join(instance_dir, f"checkpoint_ep{episode_offset + episode + 1}.pth"))
+            agent.save(
+                os.path.join(
+                    instance_dir, f"checkpoint_ep{episode_offset + episode + 1}.pth"
+                )
+            )
 
         # Sync with Hall of Fame (conservative)
         if (episode + 1) % (sync_interval * 3) == 0 and len(episode_rewards) >= 20:
@@ -618,15 +707,28 @@ def train_ppo_instance(
                 if sync_path:
                     try:
                         agent.load(sync_path)
-                        print(f"  [PPO {instance_id}] Synced with HoF (avg={my_avg:.1f} vs best={global_best:.1f})")
+                        print(
+                            f"  [PPO {instance_id}] Synced with HoF (avg={my_avg:.1f} vs best={global_best:.1f})"
+                        )
                     except Exception:
                         pass
 
         # Log
         lr = agent.get_current_lr()
         ep_num = episode_offset + episode + 1  # Continua dal log precedente
-        hof.log_episode(instance_id, phase, ep_num, episode_reward, step+1,
-                        mantis_killed, boss_hp_end, boss_defeated, current_entropy, lr, num_updates)
+        hof.log_episode(
+            instance_id,
+            phase,
+            ep_num,
+            episode_reward,
+            step + 1,
+            mantis_killed,
+            boss_hp_end,
+            boss_defeated,
+            current_entropy,
+            lr,
+            num_updates,
+        )
         hof.increment_episodes()
 
         kb = len(agent.kill_buffer)
@@ -640,25 +742,34 @@ def train_ppo_instance(
         if boss_defeated:
             wr = wins / total_ep
             print(f"\n  {'★'*20}  [PPO {instance_id}] VICTORY!  {'★'*20}")
-            print(f"  P{phase} Ep {ep_num} | R={episode_reward:+.2f} | Wins={wins} WR={wr:.0%}")
+            print(
+                f"  P{phase} Ep {ep_num} | R={episode_reward:+.2f} | Wins={wins} WR={wr:.0%}"
+            )
             print(f"  {'★'*52}\n")
         elif mantis_killed >= 2:
             print(f"  >>>> [PPO {instance_id}] KILL x{mantis_killed}! Ep {ep_num} <<<<")
 
         # Promotion check (usa episode locale, non offset)
         if auto_promote and (episode + 1) >= cfg.get("promotion_avg_window", 20):
-            if check_promotion(episode_steps_hist, episode_kills, episode_damage, wins, total_ep, cfg):
-                print(f"\n  ▲▲▲ [PPO {instance_id}] PROMOTED! Phase {phase} complete! ▲▲▲")
+            if check_promotion(
+                episode_steps_hist, episode_kills, episode_damage, wins, total_ep, cfg
+            ):
+                print(
+                    f"\n  ▲▲▲ [PPO {instance_id}] PROMOTED! Phase {phase} complete! ▲▲▲"
+                )
                 break
 
     env.close()
-    print(f"[PPO Inst {instance_id}] Phase {phase} DONE | Best R={best_reward:+.2f} | Wins={wins}/{total_ep}")
+    print(
+        f"[PPO Inst {instance_id}] Phase {phase} DONE | Best R={best_reward:+.2f} | Wins={wins}/{total_ep}"
+    )
     return best_model_path
 
 
 # ═══════════════════════════════════════════════════════════════
 # MULTI-INSTANCE LAUNCHER
 # ═══════════════════════════════════════════════════════════════
+
 
 def run_phase_multi_instance(
     phase: int,
@@ -727,10 +838,12 @@ def run_phase_multi_instance(
 # MULTI-PHASE PIPELINE
 # ═══════════════════════════════════════════════════════════════
 
+
 def run_all_phases(
     ports: List[int],
     base_dir: str,
     start_phase: int = 1,
+    end_phase: int = 4,
     end_phase: int = 4,
     pretrained_path: Optional[str] = None,
     auto_promote: bool = True,
@@ -818,19 +931,21 @@ def select_champion(checkpoint_dir: str, phase: int = 4, n_instances: int = 3) -
     state_file = os.path.join(phase_dir, "shared_state.json")
     if os.path.exists(state_file):
         try:
-            with open(state_file, 'r') as f:
+            with open(state_file, "r") as f:
                 state = json.load(f)
             for entry in state.get("best_models", []):
                 path = entry.get("path", "")
                 reward = entry.get("reward", -float("inf"))
                 inst_id = entry.get("instance_id", -1)
                 if os.path.exists(path):
-                    candidates.append({
-                        "path": path,
-                        "reward": reward,
-                        "instance_id": inst_id,
-                        "source": "hall_of_fame",
-                    })
+                    candidates.append(
+                        {
+                            "path": path,
+                            "reward": reward,
+                            "instance_id": inst_id,
+                            "source": "hall_of_fame",
+                        }
+                    )
         except Exception:
             pass
 
@@ -840,12 +955,14 @@ def select_champion(checkpoint_dir: str, phase: int = 4, n_instances: int = 3) -
         if os.path.exists(best_path):
             already = any(c["instance_id"] == i for c in candidates)
             if not already:
-                candidates.append({
-                    "path": best_path,
-                    "reward": -1.0,
-                    "instance_id": i,
-                    "source": "instance_best",
-                })
+                candidates.append(
+                    {
+                        "path": best_path,
+                        "reward": -1.0,
+                        "instance_id": i,
+                        "source": "instance_best",
+                    }
+                )
 
     if not candidates:
         print(f"\n  [Champion] Nessun modello trovato in {phase_dir}")
@@ -861,17 +978,21 @@ def select_champion(checkpoint_dir: str, phase: int = 4, n_instances: int = 3) -
     print(f"  Candidati trovati: {len(candidates)}")
     for i, c in enumerate(candidates):
         marker = " ◄ BEST" if i == 0 else ""
-        print(f"    Inst {c['instance_id']}: R={c['reward']:.2f} ({c['source']}){marker}")
+        print(
+            f"    Inst {c['instance_id']}: R={c['reward']:.2f} ({c['source']}){marker}"
+        )
 
     # ─── 3. Confronta con champion precedente ───
     old_champion = None
     if os.path.exists(champion_meta):
         try:
-            with open(champion_meta, 'r') as f:
+            with open(champion_meta, "r") as f:
                 old_champion = json.load(f)
-            print(f"\n  Champion precedente: R={old_champion.get('reward', '?'):.2f} "
-                  f"(Inst {old_champion.get('instance_id', '?')}, "
-                  f"run {old_champion.get('run_id', '?')})")
+            print(
+                f"\n  Champion precedente: R={old_champion.get('reward', '?'):.2f} "
+                f"(Inst {old_champion.get('instance_id', '?')}, "
+                f"run {old_champion.get('run_id', '?')})"
+            )
         except Exception:
             old_champion = None
 
@@ -879,7 +1000,7 @@ def select_champion(checkpoint_dir: str, phase: int = 4, n_instances: int = 3) -
     run_id = 1
     if os.path.exists(history_file):
         try:
-            with open(history_file, 'r') as f:
+            with open(history_file, "r") as f:
                 history = json.load(f)
             run_id = len(history) + 1
         except Exception:
@@ -893,11 +1014,15 @@ def select_champion(checkpoint_dir: str, phase: int = 4, n_instances: int = 3) -
     elif new_champion["reward"] > old_champion.get("reward", -float("inf")):
         save_new = True
         improvement = new_champion["reward"] - old_champion.get("reward", 0)
-        print(f"\n  ★ NUOVO CHAMPION! R={new_champion['reward']:.2f} > "
-              f"R={old_champion.get('reward', 0):.2f} (+{improvement:.2f})")
+        print(
+            f"\n  ★ NUOVO CHAMPION! R={new_champion['reward']:.2f} > "
+            f"R={old_champion.get('reward', 0):.2f} (+{improvement:.2f})"
+        )
     else:
-        print(f"\n  Champion precedente confermato (R={old_champion.get('reward', 0):.2f} >= "
-              f"R={new_champion['reward']:.2f})")
+        print(
+            f"\n  Champion precedente confermato (R={old_champion.get('reward', 0):.2f} >= "
+            f"R={new_champion['reward']:.2f})"
+        )
         print(f"  Il modello phase_{phase}_champion.pth resta invariato.")
 
     if save_new:
@@ -917,7 +1042,7 @@ def select_champion(checkpoint_dir: str, phase: int = 4, n_instances: int = 3) -
             "phase": phase,
             "phase_name": phase_name,
         }
-        with open(champion_meta, 'w') as f:
+        with open(champion_meta, "w") as f:
             json.dump(meta, f, indent=2)
 
     # ─── 5. Aggiorna la history ───
@@ -932,12 +1057,12 @@ def select_champion(checkpoint_dir: str, phase: int = 4, n_instances: int = 3) -
     history = []
     if os.path.exists(history_file):
         try:
-            with open(history_file, 'r') as f:
+            with open(history_file, "r") as f:
                 history = json.load(f)
         except Exception:
             pass
     history.append(history_entry)
-    with open(history_file, 'w') as f:
+    with open(history_file, "w") as f:
         json.dump(history, f, indent=2)
 
     # ─── 6. Stampa riepilogo ───
@@ -946,7 +1071,9 @@ def select_champion(checkpoint_dir: str, phase: int = 4, n_instances: int = 3) -
         print(f"\n  History ({len(history)} run):")
         for h in history:
             marker = " ★ CHAMPION" if h["is_new_champion"] else ""
-            print(f"    Run {h['run_id']}: R={h['reward']:.2f} (Inst {h['instance_id']}){marker}")
+            print(
+                f"    Run {h['run_id']}: R={h['reward']:.2f} (Inst {h['instance_id']}){marker}"
+            )
 
     print(f"{'═'*60}\n")
     return champion_model
@@ -960,6 +1087,7 @@ def collect_all_champions(checkpoint_dir: str, n_instances: int = 3):
     """
     # Check se esistono cartelle di fasi
     existing_phases = []
+    for phase in range(1, 5):
     for phase in range(1, 5):
         phase_dir = os.path.join(checkpoint_dir, f"phase_{phase}")
         if os.path.exists(phase_dir):
@@ -990,7 +1118,7 @@ def collect_all_champions(checkpoint_dir: str, n_instances: int = 3):
         # Leggi metadata se esiste
         if os.path.exists(champion_meta):
             try:
-                with open(champion_meta, 'r') as f:
+                with open(champion_meta, "r") as f:
                     meta = json.load(f)
                 found.append(meta)
             except Exception:
@@ -1010,9 +1138,13 @@ def collect_all_champions(checkpoint_dir: str, n_instances: int = 3):
         reward = meta.get("reward", "?")
         inst = meta.get("instance_id", "?")
         runs = meta.get("run_id", "?")
-        reward_str = f"R={reward:.2f}" if isinstance(reward, (int, float)) else f"R={reward}"
+        reward_str = (
+            f"R={reward:.2f}" if isinstance(reward, (int, float)) else f"R={reward}"
+        )
         champ_path = os.path.join(champion_dir, f"phase_{phase}_champion.pth")
-        print(f"    Phase {phase} ({name:>12}): {reward_str} | Inst {inst} | run {runs}")
+        print(
+            f"    Phase {phase} ({name:>12}): {reward_str} | Inst {inst} | run {runs}"
+        )
         print(f"      → python play_ppo.py --model {champ_path}")
 
 
@@ -1059,11 +1191,14 @@ Examples:
     parser.add_argument("--ports", type=int, nargs="+", default=[5555])
     parser.add_argument("--start-phase", type=int, default=1)
     parser.add_argument("--end-phase", type=int, default=4)
+    parser.add_argument("--end-phase", type=int, default=4)
     parser.add_argument("--phase", type=int, default=None, help="Run ONLY this phase")
     parser.add_argument("--pretrained", type=str, default=None)
     parser.add_argument("--output", type=str, default="training_output_ppo")
     parser.add_argument("--no-auto-promote", action="store_true")
-    parser.add_argument("--episodes", type=int, default=None, help="Override episodes per phase")
+    parser.add_argument(
+        "--episodes", type=int, default=None, help="Override episodes per phase"
+    )
     parser.add_argument("--sync-interval", type=int, default=15)
 
     args = parser.parse_args()
@@ -1075,7 +1210,7 @@ Examples:
     ports = list(args.ports)
     while len(ports) < args.instances:
         ports.append(ports[-1] + 1)
-    ports = ports[:args.instances]
+    ports = ports[: args.instances]
 
     print(f"\n  Agent: PPO | Instances: {args.instances} | Ports: {ports}")
 

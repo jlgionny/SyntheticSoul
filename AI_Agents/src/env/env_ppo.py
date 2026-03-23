@@ -42,6 +42,10 @@ class HollowKnightEnvPPO:
       2 - FIRST BLOOD:   Deal damage and kill the first mantis
       3 - DUAL MANTIS:   Handle two mantises simultaneously
       4 - MASTERY:       Full victory, optimize time & no-hit
+      1 - SURVIVE:       Learn to dodge, move, not die
+      2 - FIRST BLOOD:   Deal damage and kill the first mantis
+      3 - DUAL MANTIS:   Handle two mantises simultaneously
+      4 - MASTERY:       Full victory, optimize time & no-hit
     """
 
     # ═══ ACTION SPACE — Identical across PPO/DQN ═══
@@ -79,10 +83,10 @@ class HollowKnightEnvPPO:
         self.prev_player_hp = None
 
         # ═══ PPO-SPECIFIC: extra tracking for dense shaping ═══
-        self.prev_distance_to_boss = None   # Track approach/retreat
-        self.prev_player_x = None           # Track movement quality
-        self.consecutive_idle_steps = 0     # Penalize standing still
-        self.steps_without_damage = 0       # Reward sustained dodging
+        self.prev_distance_to_boss = None  # Track approach/retreat
+        self.prev_player_x = None  # Track movement quality
+        self.consecutive_idle_steps = 0  # Penalize standing still
+        self.steps_without_damage = 0  # Reward sustained dodging
 
         # Action tracking
         self.last_action = None
@@ -150,6 +154,7 @@ class HollowKnightEnvPPO:
             return self._reward_phase3_dual_mantis(state, done)
         else:
             return self._reward_phase2_first_blood(state, done)
+            return self._reward_phase2_first_blood(state, done)
 
     # ─── Shared dense shaping utilities (PPO-only) ───
 
@@ -198,7 +203,9 @@ class HollowKnightEnvPPO:
 
     # ─── Phase-specific reward functions ───
 
-    def _reward_phase1_survive(self, state: Dict, done: bool) -> Tuple[float, Dict[str, Any]]:
+    def _reward_phase1_survive(
+        self, state: Dict, done: bool
+    ) -> Tuple[float, Dict[str, Any]]:
         reward = 0.0
         info = {}
         damage_taken = state.get("damageTaken", 0)
@@ -241,7 +248,8 @@ class HollowKnightEnvPPO:
 
         boss_hp = state.get("bossHealth", 0.0)
         max_boss_hp = state.get("bossMaxHealth", 400.0)
-        if max_boss_hp <= 0: max_boss_hp = 400.0
+        if max_boss_hp <= 0:
+            max_boss_hp = 400.0
 
         current_player_hp = state.get("playerHealth", 9)
         is_dead = state.get("isDead", False)
@@ -249,7 +257,9 @@ class HollowKnightEnvPPO:
         mantis_killed = state.get("mantisLordsKilled", 0)
         boss_recovering = state.get("primaryMantisRecovering", False)
         boss_attacking = state.get("primaryMantisActive", False)
-        boss_windup = state.get("primaryMantisWindUp", False) # MODIFICA: Telegraph detection
+        boss_windup = state.get(
+            "primaryMantisWindUp", False
+        )  # MODIFICA: Telegraph detection
 
         # 1. EVITARE IL CATASTROPHIC FORGETTING
         safe = boss_recovering or (not boss_attacking and not boss_windup)
@@ -258,10 +268,10 @@ class HollowKnightEnvPPO:
 
         # Gestione Danni Subiti
         hp_lost = 0
-        if hasattr(self, 'prev_player_hp') and self.prev_player_hp is not None:
+        if hasattr(self, "prev_player_hp") and self.prev_player_hp is not None:
             hp_lost = max(0, self.prev_player_hp - current_player_hp)
             if hp_lost > 0:
-                reward -= (3.5 * hp_lost)
+                reward -= 3.5 * hp_lost
                 info["took_damage"] = True
                 if hazard_type == 2:
                     reward -= 2.5
@@ -332,6 +342,7 @@ class HollowKnightEnvPPO:
         """
         ═══════════════════════════════════════════════════════════════
         FASE 3 v2 — DUAL MANTIS (Riscritta post-analisi plateau)
+        FASE 3 v2 — DUAL MANTIS (Riscritta post-analisi plateau)
 
         PROBLEMI RISOLTI:
         ● L'agente si fermava a 1 kill perché il reward 1v1 vs 2v1
@@ -349,6 +360,7 @@ class HollowKnightEnvPPO:
         3. Danno inflitto scala 1.5× dopo la prima kill
         4. Penalità danno ridotta nel 2v1 (-3.0 vs -4.0)
         5. Delta HP per danni subiti (come fasi precedenti)
+        5. Delta HP per danni subiti (come fasi precedenti)
         6. Telegraph awareness + anti-stall
         7. Threshold bonus per HP nel 2v1
         8. Vittoria bonus aumentato a 50
@@ -359,7 +371,8 @@ class HollowKnightEnvPPO:
 
         boss_hp = state.get("bossHealth", 0.0)
         max_boss_hp = state.get("bossMaxHealth", 700.0)
-        if max_boss_hp <= 0: max_boss_hp = 700.0
+        if max_boss_hp <= 0:
+            max_boss_hp = 700.0
 
         current_player_hp = state.get("playerHealth", 9)
         is_dead = state.get("isDead", False)
@@ -424,7 +437,7 @@ class HollowKnightEnvPPO:
         # ─── 4. DANNI SUBITI — penalità ridotta nel 2v1 ───
         if hp_lost > 0:
             if in_dual_phase:
-                reward -= 3.0 * hp_lost   # Ridotta da 4.0: più margine di esplorazione
+                reward -= 3.0 * hp_lost  # Ridotta da 4.0: più margine di esplorazione
             else:
                 reward -= 3.5 * hp_lost
             self.total_damage_taken += hp_lost

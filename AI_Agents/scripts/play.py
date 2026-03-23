@@ -6,9 +6,11 @@
   USAGE:
     # PPO
     python play.py --agent ppo --model training_output_ppo/champion/phase_4_champion.pth
+    python play.py --agent ppo --model training_output_ppo/champion/phase_4_champion.pth
     python play.py --agent ppo --model best.pth --runs 50 --log results_ppo.csv
 
     # DQN
+    python play.py --agent dqn --model training_output_dqn/champion/phase_3_champion.pth
     python play.py --agent dqn --model training_output_dqn/champion/phase_3_champion.pth
     python play.py --agent dqn --model best.pth --runs 0   # infinite
 
@@ -46,6 +48,7 @@ from preprocess import preprocess_state_v2, STATE_DIM_V2
 # FRAME STACKER
 # ═══════════════════════════════════════════════════════════════
 
+
 class FrameStacker:
     def __init__(self, stack_size: int, state_dim: int):
         self.stack_size = stack_size
@@ -67,9 +70,11 @@ class FrameStacker:
 # AGENT LOADERS
 # ═══════════════════════════════════════════════════════════════
 
+
 def load_ppo_agent(model_path: str, stacked_dim: int):
     """Carica un agente PPO in modalità inference."""
     from ppo_agent import PPOAgent
+
     agent = PPOAgent(
         state_size=stacked_dim,
         action_size=8,
@@ -89,6 +94,7 @@ def load_ppo_agent(model_path: str, stacked_dim: int):
 def load_dqn_agent(model_path: str, stacked_dim: int):
     """Carica un agente DQN in modalità inference."""
     from dqn_agent import DQNAgent
+
     agent = DQNAgent(
         state_size=stacked_dim,
         action_size=8,
@@ -105,6 +111,7 @@ def load_dqn_agent(model_path: str, stacked_dim: int):
 # ═══════════════════════════════════════════════════════════════
 # GREEDY ACTION SELECTION
 # ═══════════════════════════════════════════════════════════════
+
 
 def select_action_ppo_greedy(agent, state: np.ndarray) -> int:
     """PPO: prendi l'azione con probabilità massima dalla policy."""
@@ -129,6 +136,7 @@ def select_action_dqn_greedy(agent, state: np.ndarray) -> int:
 # ENV LOADER
 # ═══════════════════════════════════════════════════════════════
 
+
 def load_env(agent_type: str, port: int):
     """Carica l'environment corretto per il tipo di agente."""
     if agent_type == "ppo":
@@ -143,8 +151,16 @@ def load_env(agent_type: str, port: int):
 # PLAY LOOP
 # ═══════════════════════════════════════════════════════════════
 
-def play(agent_type: str, model_path: str, port: int, num_runs: int,
-         max_steps: int, quiet: bool, log_path: str):
+
+def play(
+    agent_type: str,
+    model_path: str,
+    port: int,
+    num_runs: int,
+    max_steps: int,
+    quiet: bool,
+    log_path: str,
+):
 
     STACK_SIZE = 4
     raw_dim = STATE_DIM_V2
@@ -179,13 +195,23 @@ def play(agent_type: str, model_path: str, port: int, num_runs: int,
 
     # ═══ CSV Log ═══
     write_header = not os.path.exists(log_path)
-    log_file = open(log_path, 'a', newline='')
+    log_file = open(log_path, "a", newline="")
     csv_writer = csv.writer(log_file)
     if write_header:
-        csv_writer.writerow([
-            'run', 'timestamp', 'agent', 'result', 'mantis_killed',
-            'boss_hp', 'player_hp', 'steps', 'duration_sec', 'model'
-        ])
+        csv_writer.writerow(
+            [
+                "run",
+                "timestamp",
+                "agent",
+                "result",
+                "mantis_killed",
+                "boss_hp",
+                "player_hp",
+                "steps",
+                "duration_sec",
+                "model",
+            ]
+        )
 
     # ═══ Statistiche ═══
     wins = 0
@@ -195,7 +221,7 @@ def play(agent_type: str, model_path: str, port: int, num_runs: int,
     win_steps = []
 
     run = 0
-    infinite = (num_runs == 0)
+    infinite = num_runs == 0
 
     try:
         while infinite or run < num_runs:
@@ -239,18 +265,20 @@ def play(agent_type: str, model_path: str, port: int, num_runs: int,
                 result = "LOSS"
 
             # ═══ Scrivi CSV ═══
-            csv_writer.writerow([
-                run,
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                agent_label,
-                result,
-                mantis_killed,
-                f"{boss_hp:.0f}",
-                player_hp,
-                step + 1,
-                f"{elapsed:.2f}",
-                os.path.basename(model_path),
-            ])
+            csv_writer.writerow(
+                [
+                    run,
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    agent_label,
+                    result,
+                    mantis_killed,
+                    f"{boss_hp:.0f}",
+                    player_hp,
+                    step + 1,
+                    f"{elapsed:.2f}",
+                    os.path.basename(model_path),
+                ]
+            )
             log_file.flush()
 
             if not quiet:
@@ -267,11 +295,15 @@ def play(agent_type: str, model_path: str, port: int, num_runs: int,
                 avg_kills = np.mean(kills_list)
                 avg_steps = np.mean(total_steps_list)
                 print(f"\n  {'─'*50}")
-                print(f"  [{agent_label}] Dopo {run} run: {wins}W / {losses}L ({wr:.1f}% win rate)")
+                print(
+                    f"  [{agent_label}] Dopo {run} run: {wins}W / {losses}L ({wr:.1f}% win rate)"
+                )
                 print(f"  Kill medi: {avg_kills:.2f} | Steps medi: {avg_steps:.0f}")
                 if win_steps:
-                    print(f"  Vittorie — steps medio: {np.mean(win_steps):.0f}, "
-                          f"migliore: {min(win_steps)}")
+                    print(
+                        f"  Vittorie — steps medio: {np.mean(win_steps):.0f}, "
+                        f"migliore: {min(win_steps)}"
+                    )
                 print(f"  {'─'*50}\n")
 
     except KeyboardInterrupt:
@@ -328,27 +360,51 @@ if __name__ == "__main__":
 Esempi:
   python play.py --agent ppo --model training_output_ppo/champion/phase_4_champion.pth
   python play.py --agent dqn --model training_output_dqn/champion/phase_3_champion.pth
+  python play.py --agent ppo --model training_output_ppo/champion/phase_4_champion.pth
+  python play.py --agent dqn --model training_output_dqn/champion/phase_3_champion.pth
   python play.py --agent ppo --model best.pth --runs 50 --log risultati.csv
   python play.py --agent dqn --model best.pth --runs 0                  # infinite
   python play.py --agent ppo --model best.pth --quiet                   # solo riepilogo
         """,
     )
 
-    parser.add_argument("--agent", type=str, required=True,
-                        choices=["ppo", "dqn"],
-                        help="Tipo di agente: 'ppo' o 'dqn'")
-    parser.add_argument("--model", type=str, required=True,
-                        help="Percorso al file .pth del modello allenato")
-    parser.add_argument("--port", type=int, default=5555,
-                        help="Porta del gioco (default: 5555)")
-    parser.add_argument("--runs", type=int, default=20,
-                        help="Numero di partite (0 = infinite, Ctrl+C per fermare)")
-    parser.add_argument("--max-steps", type=int, default=5000,
-                        help="Max steps per partita (default: 5000)")
-    parser.add_argument("--quiet", action="store_true",
-                        help="Mostra solo riepilogo ogni 10 run")
-    parser.add_argument("--log", type=str, default="play_log.csv",
-                        help="Percorso del file CSV di output (default: play_log.csv)")
+    parser.add_argument(
+        "--agent",
+        type=str,
+        required=True,
+        choices=["ppo", "dqn"],
+        help="Tipo di agente: 'ppo' o 'dqn'",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        required=True,
+        help="Percorso al file .pth del modello allenato",
+    )
+    parser.add_argument(
+        "--port", type=int, default=5555, help="Porta del gioco (default: 5555)"
+    )
+    parser.add_argument(
+        "--runs",
+        type=int,
+        default=20,
+        help="Numero di partite (0 = infinite, Ctrl+C per fermare)",
+    )
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=5000,
+        help="Max steps per partita (default: 5000)",
+    )
+    parser.add_argument(
+        "--quiet", action="store_true", help="Mostra solo riepilogo ogni 10 run"
+    )
+    parser.add_argument(
+        "--log",
+        type=str,
+        default="play_log.csv",
+        help="Percorso del file CSV di output (default: play_log.csv)",
+    )
 
     args = parser.parse_args()
 
