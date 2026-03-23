@@ -6,9 +6,11 @@
   USAGE:
     # PPO
     python play.py --agent ppo --model training_output_ppo/champion/phase_4_champion.pth
+    python play.py --agent ppo --model training_output_ppo/champion/phase_4_champion.pth
     python play.py --agent ppo --model best.pth --runs 50 --log results_ppo.csv
 
     # DQN
+    python play.py --agent dqn --model training_output_dqn/champion/phase_3_champion.pth
     python play.py --agent dqn --model training_output_dqn/champion/phase_3_champion.pth
     python play.py --agent dqn --model best.pth --runs 0   # infinite
 
@@ -362,6 +364,8 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Esempi:
+  python play.py --agent ppo --model training_output_ppo/champion/phase_4_champion.pth
+  python play.py --agent dqn --model training_output_dqn/champion/phase_3_champion.pth
   python play.py --agent ppo --model training_output_ppo/champion/phase_4_champion.pth
   python play.py --agent dqn --model training_output_dqn/champion/phase_3_champion.pth
   python play.py --agent ppo --model best.pth --runs 50 --log risultati.csv

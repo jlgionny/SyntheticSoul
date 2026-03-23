@@ -396,16 +396,16 @@ PHASE_CONFIGS = {
     4: {
         "name": "MASTERY",
         "description": "Full victory, optimize time and no-hit",
-        "episodes": 1500,
-        "lr": 3e-5,
+        "episodes": 2000,
+        "lr": 5e-5,
         "lr_end_factor": 0.25,
-        "entropy_start": 0.02,
-        "entropy_end": 0.003,
-        "gae_lambda": 0.97,
-        "n_epochs": 6,
+        "entropy_start": 0.03,
+        "entropy_end": 0.005,
+        "gae_lambda": 0.95,
+        "n_epochs": 4,
         "batch_size": 64,
-        "update_interval": 512,
-        "gamma": 0.998,
+        "update_interval": 384,
+        "gamma": 0.995,
         "use_pattern_bonus": True,
         "preprocess_version": 2,
         "promotion_condition": "avg_mantis_killed >= 2.5",
@@ -615,7 +615,6 @@ def train_ppo_instance(
             # Extra replay per episodi 2+ kill (la risorsa più preziosa)
             if ep_mantis_killed >= 2:
                 agent.learn_from_kills()
-                agent.learn_from_kills()
                 print(f"  [PPO {instance_id}] ★ EXTRA REPLAY per 2-kill episode")
 
         if num_updates > 0:
@@ -642,7 +641,6 @@ def train_ppo_instance(
             if len(ep_transitions) >= 10:
                 states_t, actions_t, rewards_t, dones_t = zip(*ep_transitions)
                 # Salva 2 volte per sovrappesare nel buffer
-                agent.kill_buffer.add_episode(states_t, actions_t, rewards_t, dones_t)
                 agent.kill_buffer.add_episode(states_t, actions_t, rewards_t, dones_t)
                 print(
                     f"  [PPO {instance_id}] ★★ MULTI-KILL x{mantis_killed} saved 2× to buffer ({len(agent.kill_buffer)} stored)"
@@ -1127,7 +1125,6 @@ def collect_all_champions(checkpoint_dir: str, n_instances: int = 3):
         )
         print(f"      → python play_ppo.py --model {champ_path}")
 
-    # Segnala il champion globale (fase 5 se esiste, altrimenti la più alta)
     global_champ = None
     for phase in [4, 3, 2, 1]:
         candidate = os.path.join(champion_dir, f"phase_{phase}_champion.pth")
