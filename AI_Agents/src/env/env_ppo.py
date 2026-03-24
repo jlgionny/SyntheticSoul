@@ -42,10 +42,6 @@ class HollowKnightEnvPPO:
       2 - FIRST BLOOD:   Deal damage and kill the first mantis
       3 - DUAL MANTIS:   Handle two mantises simultaneously
       4 - MASTERY:       Full victory, optimize time & no-hit
-      1 - SURVIVE:       Learn to dodge, move, not die
-      2 - FIRST BLOOD:   Deal damage and kill the first mantis
-      3 - DUAL MANTIS:   Handle two mantises simultaneously
-      4 - MASTERY:       Full victory, optimize time & no-hit
     """
 
     # ═══ ACTION SPACE — Identical across PPO/DQN ═══

@@ -19,7 +19,7 @@
 **Synthetic Soul** e' un sistema di Reinforcement Learning che allena agenti AI a sconfiggere il boss fight dei **Mantis Lords** in Hollow Knight. Il progetto si compone di due parti:
 
 - **Mod C# per Unity** — si aggancia al gioco, estrae lo stato in tempo reale (51 features) e invia le azioni dell'AI al controller tramite TCP
-- **Pipeline Python di RL** — allena agenti con due algoritmi (PPO e DQN), ciascuno con reward shaping dedicato, curriculum progressivo a 5 fasi e selezione automatica dei campioni
+- **Pipeline Python di RL** — allena agenti con due algoritmi (PPO e DQN), ciascuno con reward shaping dedicato, curriculum progressivo a 4 fasi e selezione automatica dei campioni
 
 L'agente osserva HP, posizione, velocita', pattern di attacco delle mantidi, ostacoli e terreno, e impara a schivare, attaccare nelle finestre di recovery e gestire fino a 3 mantidi simultaneamente.
 
@@ -68,13 +68,13 @@ SyntetichSoul/
 │   │   └── preprocess.py           # Preprocessing stato (v1/v2)
 │   └── src/
 │       ├── agents/
-│       │   ├── ppo_agent.py        # Agente PPO con LSTM e kill buffer
+│       │   ├── ppo_agent.py        # Agente PPO con kill buffer
 │       │   └── dqn_agent.py        # Agente DQN con Dueling architecture
 │       ├── env/
 │       │   ├── env_ppo.py          # Environment reward denso
 │       │   └── env_dqn.py          # Environment reward sparso
 │       ├── models/
-│       │   ├── actor_critic.py     # Rete Actor-Critic + LSTM
+│       │   ├── actor_critic.py     # Rete Actor-Critic
 │       │   └── dqn_net.py          # Rete Dueling DQN
 │       ├── utils/
 │       │   └── generate_plots.py   # Suite di visualizzazione
@@ -116,7 +116,7 @@ pip install -r AI_Agents/src/requirements/requirements.txt
 Avvia Hollow Knight con la mod attiva, poi lancia il training dal terminale:
 
 ```bash
-# PPO — singola istanza, tutte le 5 fasi
+# PPO — singola istanza, tutte le 4 fasi
 python AI_Agents/scripts/train_ppo.py --ports 5555
 
 # PPO — 3 istanze parallele su porte diverse
@@ -132,9 +132,9 @@ python AI_Agents/scripts/train_ppo.py --start-phase 3 --pretrained best.pth --po
 ### 2. Inferenza (Play)
 
 ```bash
-# Lancia il campione PPO della fase 5
+# Lancia il campione PPO della fase 4
 python AI_Agents/scripts/play.py --agent ppo \
-    --model training_output_ppo/champion/phase_5_champion.pth
+    --model training_output_ppo/champion/phase_4_champion.pth
 
 # DQN con logging su CSV
 python AI_Agents/scripts/play.py --agent dqn \
@@ -163,17 +163,16 @@ python AI_Agents/src/utils/generate_plots.py --mode presentation \
 
 ---
 
-## Curriculum Learning — 5 Fasi
+## Curriculum Learning — 4 Fasi
 
 Il training segue un curriculum progressivo. L'agente viene promosso automaticamente alla fase successiva quando raggiunge i criteri richiesti su una finestra rolling di episodi.
 
 | Fase | Nome | Obiettivo | Criterio di Promozione |
 |:----:|------|-----------|------------------------|
 | 1 | **Survival** | Schivare, non morire | Avg survival steps ≥ 850 |
-| 2 | **First Hits** | Colpire durante le finestre di recovery | Avg danno inflitto ≥ 250 |
-| 3 | **Aggression** | Uccidere la prima mantide | Avg mantis killed ≥ 0.8 |
-| 4 | **Dual Mantis** | Gestire due mantidi simultaneamente | Avg mantis killed ≥ 1.8 |
-| 5 | **Mastery** | Vittoria completa, ottimizzare tempo e danni subiti | Win rate ≥ 50% |
+| 2 | **First Hits** | Colpire durante le finestre di recovery | Avg mantis killed ≥ 0.8 |
+| 3 | **Dual Mantis** | Gestire due mantidi simultaneamente | Avg mantis killed ≥ 1.5 |
+| 4 | **Mastery** | Vittoria completa, ottimizzare tempo e danni subiti | Avg mantis killed ≥ 2.5 |
 
 Ogni fase ha iperparametri dedicati (learning rate, entropy, episodi) che vengono automaticamente configurati.
 
@@ -193,7 +192,7 @@ I due algoritmi condividono la stessa infrastruttura (multi-istanza, curriculum,
 | Kill reward | +60 | +100 (deve dominare i Q-values) |
 | Vittoria | +30 | +50 |
 | Morte | da -2 a -5 | da -3 a -8 |
-| No-hit bonus | Continuo per-step in fase 5 | Solo terminale |
+| No-hit bonus | Continuo per-step in fase 4 | Solo terminale |
 
 ### Training Loop
 
@@ -203,7 +202,7 @@ I due algoritmi condividono la stessa infrastruttura (multi-istanza, curriculum,
 | Esplorazione | Entropy coefficient (cosine decay) | ε-greedy (exponential decay) |
 | Learning rate | 3e-4 → 5e-5 | 1e-4 → 1e-5 |
 | Update | Ogni rollout (256 step), 4-6 epoch | Ogni step da replay buffer |
-| Memoria | LSTM + kill buffer | Frame stacking + replay 100K-200K |
+| Memoria | kill buffer | Frame stacking + replay 100K-200K |
 | Stabilita' | Clipped surrogate loss | Soft target network (τ = 0.002–0.005) |
 
 ### Componenti Condivisi
@@ -270,7 +269,7 @@ training_output_ppo/champion/
 ├── phase_1_history.json        # Storico selezioni
 ├── phase_2_champion.pth
 ├── ...
-└── phase_5_champion.pth
+└── phase_4_champion.pth
 ```
 
 ---
@@ -289,7 +288,7 @@ training_output_ppo/
 │       ├── best.pth                # Miglior modello dell'istanza
 │       ├── latest.pth              # Ultimo checkpoint
 │       └── checkpoint_ep100.pth    # Checkpoint periodici
-├── phase_2/ ... phase_5/
+├── phase_2/ ... phase_4/
 └── champion/                       # Campioni selezionati per fase
 ```
 
